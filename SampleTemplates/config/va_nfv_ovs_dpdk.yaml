@@ -1,0 +1,89 @@
+---
+# Automation section. Most of those parameters will be passed to the
+# controller-0 as-is and be consumed by the `deploy-va.sh` script.
+# Please note, all paths are on the controller-0, meaning managed by the
+# Framework. Please do not edit them!
+_arch_repo: "/home/ciuser/src/github.com/openstack-k8s-operators/architecture"
+cifmw_architecture_scenario: "ovs-dpdk-sriov"
+cifmw_ci_gen_kustomize_values_ssh_private_key: ""
+cifmw_ci_gen_kustomize_values_ssh_public_key: ""
+cifmw_ci_gen_kustomize_values_ssh_authorizedkeys: ""
+cifmw_ci_gen_kustomize_values_migration_priv_key: ""
+cifmw_ci_gen_kustomize_values_migration_pub_key: ""
+cifmw_ci_gen_kustomize_values_ctlplane_interface: eno4
+cifmw_architecture_user_kustomize:
+  stage_1:
+    service-values:
+      data:
+        neutron:
+          customServiceConfig: |
+            [DEFAULT]
+            global_physnet_mtu = 9000
+            [ml2]
+            mechanism_drivers = ovn,sriovnicswitch
+            path_mtu = 0
+            [ovn]
+            vhost_sock_dir = /var/lib/vhost_sockets
+            enable_distributed_floating_ip=False
+            [ml2_type_vlan]
+            network_vlan_ranges = dpdk0:411:411,dpdk1:415:415
+  stage_2:
+    edpm-nodeset-values:
+      data:
+        baremetalSetTemplate:
+          provisioningInterface: eno4
+        nodeset:
+          ansible:
+            ansibleVars:
+              edpm_network_config_os_net_config_mappings:
+                edpm-compute-0:
+                  nic5: 04:3F:72:D9:C0:48 #enp4s0f0np0
+                  nic6: 04:3F:72:D9:C0:49 #enp4s0f0np1
+                  nic1: E4:43:4B:4C:11:96 #redhat
+                  nic2: E4:43:4B:4C:11:97 #eno4
+                  nic3: E4:43:4B:4C:11:76 #eno1
+                  nic4: E4:43:4B:4C:11:78 #eno2
+              edpm_kernel_args: "default_hugepagesz=1GB hugepagesz=1G hugepages=64 iommu=pt intel_iommu=on tsx=off isolcpus=2-23,26-47"
+              edpm_tuned_profile: "cpu-partitioning"
+              edpm_tuned_isolated_cores: "2-23,26-47"
+              edpm_ovs_dpdk_pmd_core_list: "2,3"
+              edpm_ovs_dpdk_socket_memory: "4096,1024"
+              edpm_ovs_dpdk_memory_channels: "4"
+              edpm_ovn_bridge_mappings:
+                - 'dpdk0:br-dpdk0'
+                - 'dpdk1:br-dpdk1'
+              internalapi_vlan_id: 402
+              internalapi_mtu: 1500
+              storage_vlan_id: 403
+              storage_mtu: 1500
+              tenant_vlan_id: 404
+              tenant_mtu: 1500
+
+# HERE if you want to overload kustomization, you can uncomment this parameter
+# and push the data structure you want to apply.
+# cifmw_architecture_user_kustomize:
+#   stage_0:
+#     'network-values':
+#       data:
+#         starwars: Obiwan
+
+# HERE, if you want to stop the deployment loop at any stage, you can uncomment
+# the following parameter and update the value to match the stage you want to
+# reach. Known stages are:
+#   pre_kustomize_stage_INDEX
+#   pre_apply_stage_INDEX
+#   post_apply_stage_INDEX
+#
+# cifmw_deploy_architecture_stopper:
+
+# What about some tempest?
+cifmw_run_tests: true
+cifmw_run_tempest: true
+cifmw_run_test_role: test_operator
+cifmw_test_operator_timeout: 7200
+cifmw_test_operator_tempest_include_list: |
+  tempest.scenario.test_network_basic_ops.TestNetworkBasicOps
+
+
+# Baremetal host configuration
+cifmw_config_bmh: true
