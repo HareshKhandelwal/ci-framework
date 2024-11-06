@@ -1,0 +1,30 @@
+---
+- job:
+    name: content-provider-base
+    parent: openstack-k8s-operators-content-provider
+
+- job:
+    name: openstack-meta-content-provider
+    parent: openstack-k8s-operators-content-provider
+    description: |
+      A zuul job to build content (rpms, openstack services containers,
+      operators) from opendev and github changes.
+    timeout: 5000
+    run:
+      - ci/playbooks/meta_content_provider/run.yml
+
+- job:
+    name: ci-framework-openstack-meta-content-provider
+    parent: openstack-meta-content-provider
+    description: |
+      A zuul job to build content (rpms, openstack services containers,
+      operators) from opendev and github changes. This job will run
+      against ci-framework repo to validate meta content provider
+      changes.
+    files:
+      - ^roles/build_containers/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+      - ^roles/build_openstack_packages/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+      - ^roles/registry_deploy/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+      - ^roles/edpm_build_images/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+      - ^roles/operator_build/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+      - ^ci/playbooks/meta_content_provider/.*

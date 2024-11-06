@@ -1,0 +1,37 @@
+---
+- name: Empty dlrnapi output (no jobs reported)
+  ansible.builtin.fail:
+    msg: "FAILURE: No successful jobs reported to DLRN API"
+  when:
+    - cifmw_dlrn_promote_hash_report_status_output | length == 0 or cifmw_dlrn_promote_hash_report_status_output == '[]'
+
+- name: Check for promotion criteria
+  when:
+    - cifmw_dlrn_promote_hash_report_status_output | length > 0
+    - cifmw_dlrn_promote_hash_report_status_output  != '[]'
+  block:
+    - name: Check for criteria file before copying
+      ansible.builtin.stat:
+        path: "{{ cifmw_dlrn_promote_criteria_file }}"
+      register: criteria_file
+
+    - name: Abort the role on missing criteria file
+      when: not criteria_file.stat.exists
+      ansible.builtin.fail:
+        msg: "{{ cifmw_dlrn_promote_criteria_file }} does not exists."
+
+    - name: Slurp criteria file
+      when: criteria_file.stat.exists
+      ansible.builtin.slurp:
+        path: "{{ cifmw_dlrn_promote_criteria_file }}"
+      register: criteria_data
+
+    - name: Set fact for criteria
+      ansible.builtin.set_fact:
+        criteria: "{{ criteria_data['content'] | b64decode | from_yaml }}"
+
+    - name: Query to match promotion criteria
+      ansible.builtin.include_tasks: query_criteria.yml
+      loop: "{{ criteria[cifmw_dlrn_promote_promotion_target] }}"
+      loop_control:
+        loop_var: "cifmw_dlrn_promote_criteria_job"

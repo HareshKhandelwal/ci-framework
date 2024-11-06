@@ -1,0 +1,81 @@
+---
+# This is local to your desktop/laptop.
+# We can't use ansible_user_dir here, unless you have the same user on the
+# hypervisor and locally.
+cifmw_install_yamls_repo: "~/src/github.com/openstack-k8s-operators/install_yamls"
+# This will be created on the hypervisor.
+cifmw_basedir: "{{ ansible_user_dir }}/ci-framework-data"
+cifmw_path: "{{ ansible_user_dir }}/.crc/bin:{{ ansible_user_dir }}/.crc/bin/oc:{{ ansible_user_dir }}/bin:{{ ansible_env.PATH }}"
+
+cifmw_rhol_crc_config:
+  disk-size: 100
+  memory: 24000
+
+cifmw_use_libvirt: true
+cifmw_use_uefi: true
+cifmw_root_partition_id: 4
+
+cifmw_libvirt_manager_compute_amount: 1
+cifmw_libvirt_manager_configuration:
+  vms:
+    crc:
+      admin_user: core
+      image_local_dir: "{{ ansible_user_dir }}/.crc/machines/crc/"
+      disk_file_name: "crc.qcow2"
+      disksize: 150
+      memory: 32
+      cpus: 24
+      nets:
+        - public
+        - osp_trunk
+    compute:
+      uefi: "{{ cifmw_use_uefi }}"
+      amount: "{{ [cifmw_libvirt_manager_compute_amount|int, 1] | max }}"
+      root_part_id: "{{ cifmw_root_partition_id }}"
+      image_url: "{{ cifmw_discovered_image_url }}"
+      sha256_image_name: "{{ cifmw_discovered_hash }}"
+      image_local_dir: "{{ cifmw_basedir }}/images/"
+      disk_file_name: "centos-stream-9.qcow2"
+      disksize: 50
+      memory: 8
+      cpus: 4
+      nets:
+        - public
+        - osp_trunk
+    controller:
+      uefi: "{{ cifmw_use_uefi }}"
+      image_url: "{{ cifmw_discovered_image_url }}"
+      root_part_id: "{{ cifmw_root_partition_id }}"
+      sha256_image_name: "{{ cifmw_discovered_hash }}"
+      image_local_dir: "{{ cifmw_basedir }}/images/"
+      disk_file_name: "centos-stream-9.qcow2"
+      disksize: 50
+      memory: 8
+      cpus: 4
+      nets:
+        - public
+        - osp_trunk
+  networks:
+    public: |-
+      <network>
+        <name>public</name>
+        <forward mode='nat'/>
+        <bridge name='public' stp='on' delay='0'/>
+        <mac address='52:54:00:6a:f2:dc'/>
+        <dns enable="no"/>
+        <ip family='ipv4' address='192.168.100.1' prefix='24'>
+        </ip>
+      </network>
+    osp_trunk: |-
+      <network>
+        <name>osp_trunk</name>
+        <forward mode='nat'/>
+        <bridge name='osp_trunk' stp='on' delay='0'/>
+        <mac address='52:54:00:fd:be:d0'/>
+        <dns enable="no"/>
+        <ip family='ipv4'
+        address='{{ cifmw_networking_definition.networks.ctlplane.gateway }}'
+        prefix='{{ cifmw_networking_definition.networks.ctlplane.network |
+                   ansible.utils.ipaddr('prefix') }}'>
+        </ip>
+      </network>

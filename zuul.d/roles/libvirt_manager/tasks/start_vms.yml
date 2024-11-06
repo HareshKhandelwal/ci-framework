@@ -1,0 +1,76 @@
+---
+- name: Refresh oooq_pool before starting VMs
+  when:
+    - "item.value.status == 'running'"
+  community.libvirt.virt_pool:
+    command: refresh
+    name: "{{ item.key }}"
+  loop: "{{ ansible_libvirt_pools | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: "Start VMs for type {{ vm_type }}"
+  when:
+    - vm_data.start | default(true) | bool
+    - vm_data.disk_file_name != 'blank'
+  vars:
+    vm: "{{ _vm.key }}"
+    vm_type: "{{ _vm.value }}"
+    vm_data: >-
+      {{
+        _cifmw_libvirt_manager_layout.vms[vm_type]
+      }}
+  community.libvirt.virt:
+    state: running
+    name: "cifmw-{{ vm }}"
+    uri: "qemu:///system"
+  loop: "{{ cifmw_libvirt_manager_all_vms | dict2items }}"
+  loop_control:
+    loop_var: _vm
+    pause: 1
+
+- name: "Wait for SSH on started VMs"
+  register: _async_wait_ssh
+  when:
+    - vm_data.start | default(true) | bool
+    - vm_data.disk_file_name != 'blank'
+  vars:
+    vm: "{{ _vm.key }}"
+    vm_type: "{{ _vm.value }}"
+    vm_data: >-
+      {{
+        _cifmw_libvirt_manager_layout.vms[vm_type]
+      }}
+    _ocp_name: >-
+      {{
+        vm |
+        replace('ocp-', '')
+      }}
+    _hostname: >-
+      {{
+        (vm is match('^ocp.*')) |
+        ternary(_ocp_name, vm)
+      }}
+  ansible.builtin.wait_for:
+    host: "{{ _hostname }}.utility"
+    port: 22
+    delay: 2
+  loop: "{{ cifmw_libvirt_manager_all_vms | dict2items}}"
+  loop_control:
+    loop_var: _vm
+    label: "{{ _hostname }}.utility"
+  async: 120
+  poll: 0
+
+- name: Ensure we get SSH on nodes
+  when:
+    - a_result.ansible_job_id is defined
+  ansible.builtin.async_status:
+    jid: "{{ a_result.ansible_job_id }}"
+  loop: "{{ _async_wait_ssh.results }}"
+  loop_control:
+    loop_var: a_result
+  register: a_poll_result
+  until: a_poll_result.finished
+  retries: 60
+  delay: 2

@@ -1,0 +1,34 @@
+---
+- name: Set empty value for dlrnapi password
+  ansible.builtin.set_fact:
+    dlrnapi:
+      password: ""
+  when:
+    - dlrnapi is defined
+    - "'password' not in dlrnapi"
+
+- name: Promote target hash
+  ansible.builtin.shell: # noqa: command-instead-of-shell
+    cmd: >-
+      dlrnapi --url {{ cifmw_repo_setup_dlrn_api_url }}
+      {% if cifmw_dlrn_promote_kerberos_auth|bool -%}
+      --server-principal {{ cifmw_dlrn_report_dlrnapi_host_principal }} --auth-method kerberosAuth
+      {% endif -%}
+      repo-promote
+      {% if (cifmw_dlrn_promote_extended_hash is defined) and (cifmw_repo_setup_extended_hash | length > 0) -%}
+      --extended-hash {{ cifmw_dlrn_promote_extended_hash }}
+      {% endif -%}
+      {% if cifmw_dlrn_promote_commit_hash | length > 0 -%}
+      --commit-hash {{ cifmw_dlrn_promote_commit_hash }}
+      {% endif -%}
+      {% if cifmw_dlrn_promote_distro_hash | length > 0 -%}
+      --distro-hash {{ cifmw_dlrn_promote_distro_hash }}
+      {% endif -%}
+      --promote-name {{ cifmw_dlrn_promote_promotion_target }}
+  environment: |
+    {{ zuul | zuul_legacy_vars | combine({
+      'DLRNAPI_PASSWORD': dlrnapi.password,
+      'DLRNAPI_USERNAME': cifmw_dlrn_report_dlrnapi_user,
+      'SSL_CA_BUNDLE': cifmw_dlrn_promote_ssl_ca_bundle
+      }) }}
+  changed_when: true

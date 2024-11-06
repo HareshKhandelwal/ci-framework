@@ -1,0 +1,105 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Converge
+  hosts: all
+  vars_files:
+    - ./resources/vars.yml
+  tasks:
+    - name: No hook
+      vars:
+        step: no_hook
+      ansible.builtin.include_role:
+        name: run_hook
+
+    - name: Ensure we do not have ceph_uuid
+      ansible.builtin.assert:
+        that:
+          - ceph_uuid is undefined
+
+    - name: Combined hooks
+      vars:
+        step: run_molecule
+      ansible.builtin.include_role:
+        name: run_hook
+
+    - name: Ensure we have the ceph_uuid variable now
+      ansible.builtin.assert:
+        that:
+          - ceph_uuid is defined
+          - ceph_uuid == 'dummy-1.yml'
+
+    - name: Only listed hooks
+      vars:
+        step: list_hooks
+      ansible.builtin.include_role:
+        name: run_hook
+
+    - name: Ensure we have the ceph_uuid variable now
+      ansible.builtin.assert:
+        that:
+          - ceph_uuid is defined
+          - ceph_uuid == 'dummy-3.yml'
+
+    - name: Only filtered hooks
+      vars:
+        step: filtered_hooks
+      ansible.builtin.include_role:
+        name: run_hook
+
+    - name: Ensure we have the ceph_uuid variable now
+      ansible.builtin.assert:
+        that:
+          - ceph_uuid is defined
+          - ceph_uuid == 'dummy-4.yml'
+
+    - name: Direct hooks
+      vars:
+        step: no_hook
+        hooks:
+          - name: Dummy-5
+            source: /tmp/dummy-5.yml
+            type: playbook
+            extra_vars:
+              foo: bar
+              file: "/tmp/dummy-env.yml"
+      ansible.builtin.include_role:
+        name: run_hook
+
+    - name: Ensure we have the ceph_uuid variable now
+      ansible.builtin.assert:
+        that:
+          - ceph_uuid is defined
+          - ceph_uuid == 'dummy-5.yml'
+
+    - name: Direct hooks as param
+      vars:
+        step: no_hook
+        hooks: "{{ my_hook }}"
+      ansible.builtin.include_role:
+        name: run_hook
+
+    - name: Ensure we have the ceph_uuid variable now
+      ansible.builtin.assert:
+        that:
+          - ceph_uuid is defined
+          - ceph_uuid == 'dummy-6.yml'
+
+    - name: Ensure we have the test_list variable now
+      ansible.builtin.assert:
+        that:
+          - test_list is defined
+          - test_list | length == 2

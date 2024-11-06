@@ -1,0 +1,94 @@
+networks:
+  network-1:
+    network-v6: "fdc0:8b54:108a:c949::/64"
+    gateway: "fdc0:8b54:108a:c949::1"
+    search-domain: "network-1.example.net"
+    dns:
+      - "2001:4860:4860::8888"
+    mtu: 1500
+    tools:
+      multus:
+        ranges:
+          - start: 30
+            end: 39
+        routes:
+          - destination: "fdc0:8b54:108a:c949::/64"
+            gateway: "fdc0:8b54:108a:c948:0000:0000:0000:0001"
+      netconfig:
+        ranges:
+          - start: 40
+            end: "90"
+          - start: 91
+            end: "fdc0:8b54:108a:c949::ff"
+      metallb:
+        ranges:
+          - start: "fdc0:8b54:108a:c949::100"
+            length: 10
+  network-3:
+    network: "fd42:add0:b7d2:09b1::/64"
+    gateway-v6: "fd42:add0:b7d2:09b1::1"
+    search-domain: "network-3.example.net"
+    vlan: 20
+    mtu: 1496
+    tools:
+      multus:
+        ranges:
+          - start: 30
+            end: 99
+      netconfig:
+        ranges:
+          - start: fd42:add0:b7d2:09b1::64
+            length: 10
+      metallb:
+        ranges:
+          - start: 110
+            end: 169
+  network-2:
+    network: "fd5e:bdb2:6091:9306::/64"
+    dns-v6:
+      - "fd5e:bdb2:6091:9306:ffff:ffff:ffff:fffd"
+    vlan: 21
+    tools:
+      netconfig:
+        ranges:
+          - start: 100
+            length: 10
+      metallb:
+        ranges:
+          - start: 60
+            end: 69
+  network-4:
+    network: "fd98:6d1a:86e7:d5e5::/64"
+    vlan: 22
+group-templates:
+  group-1:
+    network-template:
+      range:
+        start: 300
+        length: 40
+    networks:
+      network-1: {}
+  group-2:
+    network-template:
+      range:
+        start: 400
+        length: 40
+    networks:
+      network-2: {}
+  group-3:
+    network-template:
+      range:
+        start: 500
+        length: 40
+    networks:
+      network-4: {}
+      network-3:
+        trunk-parent: network-4
+instances:
+  instance-1:
+    networks:
+      network-1:
+        ip: "fdc0:8b54:108a:c949::f1a"
+      network-3:
+        ip: "fd42:add0:b7d2:09b1::f1a"
+        trunk-parent: network-1

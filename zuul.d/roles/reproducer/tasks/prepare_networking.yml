@@ -1,0 +1,227 @@
+---
+- name: Ensure networks are consistent
+  when:
+    - cifmw_reproducer_validate_network | bool
+  ansible.builtin.include_tasks: "network_assertions.yml"
+
+- name: Ensure we get latest OCP config
+  ansible.builtin.include_role:
+    name: "devscripts"
+    tasks_from: "build_config.yml"
+
+# Just ensure we don't have any dangling dnsmasq settings
+# in the NetworkManager - that would prevent the standalone
+# instance to start and attach the exected networks
+- name: Ensure legacy ci_network dnsmasq config are absent
+  ansible.builtin.import_role:
+    name: "ci_network"
+    tasks_from: "cleanup-dns.yml"
+
+- name: Ensure NetworkManager is configured to use dnsmasq
+  become: true
+  notify: Restart NetworkManager
+  ansible.builtin.copy:
+    dest: "{{ cifmw_reproducer_nm_dnsmasq }}"
+    mode: "0644"
+    content: |
+      [main]
+      dns=dnsmasq
+
+- name: Flush handlers for NetworkManager restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure no default networks exists
+  vars:
+    net_name: "{{ item }}"
+  ansible.builtin.include_role:
+    name: libvirt_manager
+    tasks_from: delete_network.yml
+  loop:
+    - crc
+    - default
+
+- name: Ensure basic host configurations are present
+  become: true
+  block:
+    - name: Ensure firewalld is installed
+      ansible.builtin.package:
+        name:
+          - firewalld
+
+    - name: Ensure firewalld service is enabled and started
+      ansible.builtin.systemd_service:
+        name: firewalld
+        state: started
+        enabled: true
+
+    - name: Ensure br_netfilter module is loaded
+      community.general.modprobe:
+        name: br_netfilter
+        state: present
+
+    - name: Ensure IP forwarding is enabled
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: 1
+        state: present
+
+    - name: Ensure the required parameters are loaded
+      ansible.posix.sysctl:
+        name: "net.bridge.bridge-nf-call-{{ item }}"
+        value: 0
+        state: present
+      loop:
+        - arptables
+        - iptables
+        - ip6tables
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Ensure firewall service is enabled and started
+      ansible.builtin.service:
+        name: firewalld
+        enabled: true
+        state: started
+
+# Since ci_nmstate relies on the inventory_hostname to find its
+# configuration, we have to bend ansible a bit:
+# it does NOT want to get any jinja2 in a dict *key*, meaning we
+# can't provide a nice parameter from within the networking-definition.yml
+# environment file using the `cifmw_target_host`.
+# We have, instead, to build the structure as a plain string, where it gets
+# the proper interpretation, and convert that string into YAML.
+# Of course, if anyone provides their own config, we won't override it.
+# As a matter of fact, `set_fact` doesn't override user-provided parameters
+# anyway.
+- name: Set cifmw_ci_nmstate_instance_config if needed
+  when:
+    - cifmw_ci_nmstate_instance_config is undefined
+  vars:
+    _ip_network: >-
+      {{ cifmw_devscripts_config.provisioning_network | default('172.22.0.0/24') }}
+    _ip_address: >-
+      {{ _ip_network | ansible.utils.nthhost(1) }}
+    _prefix_length: >-
+      {{ _ip_network | ansible.utils.ipaddr('prefix') }}
+    _ip_version_enable: >-
+      {{ _ip_address is ansible.utils.ipv4 | ternary('ipv4', 'ipv6') }}
+    _ip_version_disable: >-
+      {{ _ip_address is ansible.utils.ipv4 | ternary('ipv6', 'ipv4') }}
+    _content: |-
+      {{ cifmw_target_host | default('localhost') }}:
+        interfaces:
+          - name: ocppr
+            type: linux-bridge
+            state: up
+            {{ _ip_version_enable }}:
+              enabled: true
+              address:
+                - ip: {{ _ip_address }}
+                  prefix-length: "{{ _prefix_length }}"
+            {{ _ip_version_disable }}:
+              enabled: false
+            bridge:
+              options:
+                stp:
+                  enabled: true
+                  forward-delay: 5
+                  hello-time: 2
+                  max-age: 20
+                  priority: 32768
+  ansible.builtin.set_fact:
+    cifmw_ci_nmstate_instance_config: "{{ _content | from_yaml }}"
+
+- name: Ensure the required network configurations are applied
+  ansible.builtin.include_role:
+    name: ci_nmstate
+
+- name: Select right domain
+  ansible.builtin.set_fact:
+    cifmw_reproducer_domain: >-
+      {%- if _use_crc | bool -%}
+      crc.testing
+      {%- elif _use_ocp | bool -%}
+      {{ cifmw_devscripts_config.cluster_name }}.{{ cifmw_devscripts_config.base_domain }}
+      {%- endif -%}
+
+- name: Create the virtual networks
+  when:
+    - cifmw_libvirt_manager_mac_map is undefined
+  ansible.builtin.include_role:
+    name: libvirt_manager
+    tasks_from: generate_networking_data.yml
+
+- name: Delegate our domains to our own instance
+  become: true
+  notify: Restart NetworkManager
+  vars:
+    _domain: "{{ cifmw_devscripts_config.base_domain }}"
+  ansible.builtin.copy:
+    dest: "{{ cifmw_reproducer_nm_delegation }}"
+    mode: "0644"
+    content: |
+      # Managed by ci-framework/reproducer
+      server=/{{ _domain }}/127.0.0.2
+      server=/apps-crc.testing/127.0.0.2
+      server=/crc.testing/127.0.0.2
+      server=/utility/127.0.0.2
+      server=/{{ inventory_hostname }}/127.0.0.2
+
+- name: Feed utility records
+  block:
+    - name: Ensure "utility" domain is local
+      become: true
+      notify: "Restart dnsmasq"
+      ansible.builtin.copy:
+        dest: "/etc/cifmw-dnsmasq.d/utility.conf"
+        mode: "0644"
+        content: |-
+          local=/utility/
+
+    # Using "public" gateway IP should ensure we're targeting an IP
+    # on the hypervisor, reachable by the VMs, ensuring it can discuss
+    # with the host (vbmc and sushy_emulator reaching libvirt, etc).
+    # Note that "public" is either "public" or "ocpbm" virtual networks.
+    # We need one where the ocp-bootstrap instance is connected.
+    # Also, "public" network doesn't seem to provide any "gw_v*" - we have
+    # to build it.
+    - name: Build utility records dataset
+      vars:
+        # Since we use might skip some tags, we must re-iterate the default
+        # value for the cifmw_libvirt_manager_pub_net parameter here.
+        _pub_net: "{{ cifmw_libvirt_manager_pub_net | default('public') }}"
+        _target_net: >-
+          {{
+            cifmw_networking_env_definition.networks[_pub_net]
+          }}
+        _controller_net: >-
+          {{
+            cifmw_networking_env_definition.instances['controller-0'].networks
+          }}
+        cifmw_dnsmasq_host_record:
+          - names:
+              - "ipmi.utility"
+              - "{{ inventory_hostname }}.utility"
+            ips:
+              - >-
+                {%- if _target_net.network_v4 is defined -%}
+                {{ _target_net.network_v4 | ansible.utils.nthhost(1) }}
+                {%- endif -%}
+              - >-
+                {%- if _target_net.network_v6 is defined -%}
+                {{ _target_net.network_v6 | ansible.utils.nthhost(1) }}
+                {%- endif -%}
+            state: present
+          - names:
+              - "sushy.utility"
+              - "controller-0.utility"
+            ips:
+              - "{{ _controller_net.ctlplane.ip_v4 | default('') }}"
+              - "{{ _controller_net.ctlplane.ip_v6 | default('') }}"
+            state: present
+      ansible.builtin.include_role:
+        name: "dnsmasq"
+        tasks_from: "manage_host_record.yml"
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers

@@ -1,0 +1,35 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+
+- name: Remove the local dns configuration
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  register: _dnsmasq_files_cleanup
+  loop:
+    - "{{ cifmw_network_nm_config_dnsmasq_file }}"
+    - "{{ cifmw_network_dnsmasq_leases_file }}"
+    - "{{ cifmw_network_dnsmasq_forwarders_file }}"
+    - "{{ cifmw_network_dnsmasq_config_file }}"
+
+- name: Reload the NetworkManager to pick the changes # noqa: no-handler
+  become: true
+  when: _dnsmasq_files_cleanup is changed
+  ansible.builtin.service:
+    name: NetworkManager
+    state: "reloaded"

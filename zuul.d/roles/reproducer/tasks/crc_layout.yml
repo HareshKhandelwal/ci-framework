@@ -1,0 +1,58 @@
+---
+- name: Check for CRC availability in known path
+  register: _crc_available
+  vars:
+    _img: >-
+      {{
+        (_cifmw_libvirt_manager_layout.vms.crc.image_local_dir,
+         _cifmw_libvirt_manager_layout.vms.crc.disk_file_name) |
+         path_join
+      }}
+  ansible.builtin.stat:
+    path: "{{ _img }}"
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+
+- name: Deploy CRC if needed
+  when:
+    - not _crc_available.stat.exists
+  ansible.builtin.include_role:
+    name: rhol_crc
+
+- name: Ensure CRC is stopped
+  ansible.builtin.import_role:
+    name: rhol_crc
+    tasks_from: undefine.yml
+
+- name: Slurp ssh key for CRC access
+  register: crc_priv_key
+  ansible.builtin.slurp:
+    path: "{{ ansible_user_dir}}/.crc/machines/crc/id_ecdsa"
+
+- name: Get kubeconfig file from crc directory
+  register: _crc_kubeconfig
+  ansible.builtin.slurp:
+    path: "{{ cifmw_reproducer_kubecfg }}"
+
+- name: Get kubeadmin-password file from crc directory
+  register: _crc_kubeadm
+  ansible.builtin.slurp:
+    path: "{{ ansible_user_dir}}/.crc/machines/crc/kubeadmin-password"
+
+- name: Ensure we expose openshift_login related facts
+  when:
+    - _crc_available.stat.exists
+  ansible.builtin.include_role:
+    name: rhol_crc
+    tasks_from: set_cluster_fact.yml
+
+- name: Remove CRC managed zone delegation
+  become: true
+  notify: Restart NetworkManager
+  ansible.builtin.file:
+    path: "/etc/NetworkManager/{{ item }}"
+    state: absent
+  loop:
+    - "dnsmasq.d/crc.conf"
+    - "conf.d/crc-nm-dnsmasq.conf"

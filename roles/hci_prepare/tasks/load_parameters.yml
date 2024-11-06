@@ -1,0 +1,74 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Load parameters
+  ansible.builtin.include_vars:
+    dir: "{{ item }}"
+  loop:
+    - "{{ cifmw_basedir }}/artifacts/parameters"
+    - "/etc/ci/env"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Try/catch pattern for debugging
+  block:
+    - name: Extract first compute from inventory
+      ansible.builtin.set_fact:
+        _first_compute: >-
+          {{ groups['computes'] | select('match', '^compute.*0$') | first }}
+
+    - name: Ensure we have needed bits for compute when needed
+      ansible.builtin.assert:
+        that:
+          - _first_compute | length != 0
+          - crc_ci_bootstrap_networks_out[_first_compute] is defined
+          - crc_ci_bootstrap_networks_out[_first_compute]['storage-mgmt'] is defined or
+            crc_ci_bootstrap_networks_out[_first_compute]['storagemgmt'] is defined
+
+  rescue:
+    - name: Dump inventory hosts groups
+      ansible.builtin.debug:
+        var: groups
+
+    - name: Dump crc_ci_bootstrap_networks_out
+      ansible.builtin.debug:
+        var: crc_ci_bootstrap_networks_out
+
+    - name: Finally fail
+      ansible.builtin.fail:
+        msg: A failure was detected. Check debugging information above.
+
+- name: Set mtu value from crc_ci_bootstrap_networks_out
+  when:
+    - crc_ci_bootstrap_networks_out[_first_compute]['storage-mgmt'].mtu is defined or
+      crc_ci_bootstrap_networks_out[_first_compute]['storagemgmt'].mtu is defined
+  ansible.builtin.set_fact:
+    cifmw_hci_prepare_storage_mgmt_mtu: >-
+      {{
+        crc_ci_bootstrap_networks_out[_first_compute]['storage-mgmt'].mtu |
+        default(crc_ci_bootstrap_networks_out[_first_compute]['storagemgmt'].mtu)
+      }}
+
+- name: Set vlan value from crc_ci_bootstrap_networks_out
+  when:
+    - crc_ci_bootstrap_networks_out[_first_compute]['storage-mgmt'].vlan is defined or
+      crc_ci_bootstrap_networks_out[_first_compute]['storagemgmt'].vlan is defined
+  ansible.builtin.set_fact:
+    cifmw_hci_prepare_storage_mgmt_vlan: >-
+      {{
+        crc_ci_bootstrap_networks_out[_first_compute]['storage-mgmt'].vlan |
+        default(crc_ci_bootstrap_networks_out[_first_compute]['storagemgmt'].vlan)
+      }}

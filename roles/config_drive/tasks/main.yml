@@ -1,0 +1,106 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Ensure needed directories exist
+  ansible.builtin.file:
+    path: "{{ cifmw_config_drive_basedir }}/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - artifacts
+    - logs
+
+- name: Install required RPM packages
+  tags:
+    - packages
+  become: true
+  ansible.builtin.package:
+    name:
+      - genisoimage
+      - gzip
+      - coreutils
+    state: present
+
+- name: Crate config drive instance directory
+  ansible.builtin.file:
+    path: "{{ cifmw_config_drive_instancedir }}"
+    state: directory
+    mode: "0755"
+
+- name: Generate meta-data
+  register: _meta_data_change
+  ansible.builtin.template:
+    backup: true
+    src: "meta-data.j2"
+    dest: "{{ cifmw_config_drive_instancedir }}/meta-data"
+    mode: '0644'
+
+- name: Generate user-data
+  register: _user_data_change
+  when:
+    - cifmw_config_drive_userdata is defined
+    - cifmw_config_drive_userdata | length > 0
+  ansible.builtin.template:
+    backup: true
+    src: "user-data.j2"
+    dest: "{{ cifmw_config_drive_instancedir }}/user-data"
+    mode: '0644'
+
+- name: Generate network-data
+  register: _net_data_change
+  when:
+    - cifmw_config_drive_networkconfig is defined
+    - cifmw_config_drive_networkconfig | length > 0
+  ansible.builtin.template:
+    backup: true
+    src: "network-config.j2"
+    dest: "{{ cifmw_config_drive_instancedir }}/network-config"
+    mode: '0644'
+
+- name: Check ISO availability
+  register: _iso_stat
+  ansible.builtin.stat:
+    path: "{{ cifmw_config_drive_iso_image }}"
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+
+- name: Assert we don't try to change an existing ISO
+  when:
+    - _iso_stat.stat.exists
+  ansible.builtin.assert:
+    that:
+      - _meta_data_change is not changed
+      - _user_data_change is not changed
+      - _net_data_change is not changed
+    msg: >-
+      You're trying to edit an existing ISO. This isn't possible,
+      since the ISO is usually attached to a virtual machine, and
+      you cannot dynamically edit it.
+
+- name: Generate nocloud iso image
+  cifmw.general.ci_script:
+    chdir: "{{ cifmw_config_drive_instancedir }}"
+    output_dir: "{{ cifmw_config_drive_basedir }}/artifacts"
+    creates: "{{ cifmw_config_drive_iso_image }}"
+    script: >-
+      genisoimage -output {{ cifmw_config_drive_iso_image }} -volid CIDATA
+      -joliet
+      -rock user-data meta-data
+      {% if cifmw_config_drive_networkconfig is defined and
+            cifmw_config_drive_networkconfig | length > 0 -%}
+       network-config
+      {%- endif -%}

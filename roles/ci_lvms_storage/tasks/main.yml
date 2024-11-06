@@ -1,0 +1,216 @@
+---
+# Copyright 2024 Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Ensure cifmw_lvms_disk_list has been set
+  ansible.builtin.fail:
+    msg: >-
+      cifmw_lvms_disk_list must be set to a list of existing block devices
+      on OCP nodes, e.g. `cifmw_lvms_disk_list: [/dev/vda, /dev/vdb]`
+  when:
+    - cifmw_lvms_disk_list is not defined or cifmw_lvms_disk_list | length == 0
+
+- name: Create role needed directories
+  ansible.builtin.file:
+    path: "{{ cifmw_lvms_manifests_dir }}"
+    state: directory
+
+- name: Put the manifest files in place
+  ansible.builtin.template:
+    src: "templates/{{ item }}.yaml.j2"
+    dest: "{{ cifmw_lvms_manifests_dir }}/{{ item }}.yaml"
+    mode: "0644"
+    force: true
+  loop:
+    - lvms-namespace
+    - operator-group
+    - subscription
+    - lvms-cluster
+
+- name: Apply lvms-operator namespace manifest file with annotations
+  kubernetes.core.k8s:
+    kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+    api_key: "{{ cifmw_openshift_token | default(omit) }}"
+    context: "{{ cifmw_openshift_context | default(omit) }}"
+    src: "{{ cifmw_lvms_manifests_dir }}/lvms-namespace.yaml"
+    state: present
+  retries: "{{ cifmw_lvms_retries }}"
+  delay: "{{ cifmw_lvms_delay }}"
+  register: result
+  until: result.failed == false
+
+- name: Wait for lvms-operator namespace to be active
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+    api_key: "{{ cifmw_openshift_token | default(omit) }}"
+    context: "{{ cifmw_openshift_context | default(omit) }}"
+    kind: Namespace
+    name: "{{ cifmw_lvms_namespace }}"
+  register: namespace_info
+  until:
+    - namespace_info.resources | length > 0
+    - namespace_info.resources[0].status is defined
+    - namespace_info.resources[0].status.phase is defined
+    - namespace_info.resources[0].status.phase == "Active"
+  retries: "{{ cifmw_lvms_retries }}"
+  delay: "{{ cifmw_lvms_delay }}"
+
+- name: Apply lvms-operator group manifest file
+  kubernetes.core.k8s:
+    kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+    api_key: "{{ cifmw_openshift_token | default(omit) }}"
+    context: "{{ cifmw_openshift_context | default(omit) }}"
+    src: "{{ cifmw_lvms_manifests_dir }}/operator-group.yaml"
+    state: present
+  retries: "{{ cifmw_lvms_retries }}"
+  delay: "{{ cifmw_lvms_delay }}"
+  register: result
+  until: result.failed == false
+
+- name: Ensure we can get info from lvms-operator group
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+    api_key: "{{ cifmw_openshift_token | default(omit) }}"
+    context: "{{ cifmw_openshift_context | default(omit) }}"
+    kind: OperatorGroup
+    name: "{{ cifmw_lvms_namespace }}-operatorgroup"
+    namespace: "{{ cifmw_lvms_namespace }}"
+  register: og_info
+  until: og_info.failed == false
+  retries: "{{ cifmw_lvms_retries }}"
+  delay: "{{ cifmw_lvms_delay }}"
+
+- name: Apply lvms-operator subscription manifest file
+  kubernetes.core.k8s:
+    kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+    api_key: "{{ cifmw_openshift_token | default(omit) }}"
+    context: "{{ cifmw_openshift_context | default(omit) }}"
+    src: "{{ cifmw_lvms_manifests_dir }}/subscription.yaml"
+    state: present
+  retries: "{{ cifmw_lvms_retries }}"
+  delay: "{{ cifmw_lvms_delay }}"
+  register: result
+  until: result.failed == false
+
+- name: Wait for lvms operator CSV to be ready
+  environment:
+    KUBECONFIG: "{{ cifmw_openshift_kubeconfig }}"
+    PATH: "{{ cifmw_path }}"
+  ansible.builtin.command:
+    cmd: >-
+      oc get ClusterServiceVersion
+      -n "{{ cifmw_lvms_namespace }}"
+      -l operators.coreos.com/lvms-operator.openshift-storage
+      -o jsonpath='{.items[*].status.phase}'
+  changed_when: false
+  register: _cifmw_lvms_storage_cluster_csv_phase_out
+  retries: "{{ cifmw_lvms_retries }}"
+  delay: "{{ cifmw_lvms_delay }}"
+  until:
+    - _cifmw_lvms_storage_cluster_csv_phase_out is defined
+    - _cifmw_lvms_storage_cluster_csv_phase_out.failed is false
+    - _cifmw_lvms_storage_cluster_csv_phase_out.stdout_lines | length > 0
+    - "(_cifmw_lvms_storage_cluster_csv_phase_out.stdout_lines[0] | lower) == 'succeeded'"
+
+- name: Apply lvms-cluster manifest file
+  kubernetes.core.k8s:
+    kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+    api_key: "{{ cifmw_openshift_token | default(omit) }}"
+    context: "{{ cifmw_openshift_context | default(omit) }}"
+    src: "{{ cifmw_lvms_manifests_dir }}/lvms-cluster.yaml"
+    state: present
+  retries: "{{ cifmw_lvms_retries }}"
+  delay: "{{ cifmw_lvms_delay }}"
+  register: result
+  until: result.failed == false
+
+- name: Wait for the LVMCluster to be ready
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+    api_key: "{{ cifmw_openshift_token | default(omit) }}"
+    context: "{{ cifmw_openshift_context | default(omit) }}"
+    api_version: lvm.topolvm.io/v1alpha1
+    kind: LVMCluster
+    name: "{{ cifmw_lvms_cluster_name }}"
+    namespace: "{{ cifmw_lvms_namespace }}"
+  register: _cifmw_lvms_storage_cluster_lvmscluster_out
+  retries: "{{ cifmw_lvms_retries }}"
+  delay: "{{ cifmw_lvms_delay }}"
+  until:
+    - _cifmw_lvms_storage_cluster_lvmscluster_out.resources | length == 1
+    - _cifmw_lvms_storage_cluster_lvmscluster_out.failed is false
+    - _cifmw_lvms_storage_cluster_lvmscluster_out.resources[0].status is defined
+    - _cifmw_lvms_storage_cluster_lvmscluster_out.resources[0].status.ready is defined
+    - _cifmw_lvms_storage_cluster_lvmscluster_out.resources[0].status.ready | bool
+    - _cifmw_lvms_storage_cluster_lvmscluster_out.resources[0].status.deviceClassStatuses is defined
+    - >-
+      _cifmw_lvms_storage_cluster_lvmscluster_out.resources[0].status.deviceClassStatuses |
+      selectattr("name", "defined") |
+      selectattr("nodeStatus", "defined") |
+      selectattr("name", "equalto", cifmw_lvms_storage_class) |
+      map(attribute="nodeStatus") | flatten |
+      selectattr("status", "defined") |
+      map(attribute="status") | unique == ["Ready"]
+
+- name: Wait for all the LVMVolumeGroupNodeStatus to be ready
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+    api_key: "{{ cifmw_openshift_token | default(omit) }}"
+    context: "{{ cifmw_openshift_context | default(omit) }}"
+    api_version: lvm.topolvm.io/v1alpha1
+    kind: LVMVolumeGroupNodeStatus
+    namespace: "{{ cifmw_lvms_namespace }}"
+  register: _cifmw_lvms_storage_cluster_lvmvolumegroupnodestatus_out
+  retries: "{{ cifmw_lvms_retries }}"
+  delay: "{{ cifmw_lvms_delay }}"
+  until:
+    - _cifmw_lvms_storage_cluster_lvmvolumegroupnodestatus_out.failed is false
+    - _cifmw_lvms_storage_cluster_lvmvolumegroupnodestatus_out.resources is defined
+    - >-
+      _cifmw_lvms_storage_cluster_lvmvolumegroupnodestatus_out.resources |
+      selectattr("spec.nodeStatus", "defined") |
+      map(attribute="spec.nodeStatus") | flatten |
+      selectattr("status", "defined") |
+      map(attribute="status") | unique == ["Ready"]
+
+- name: Wait for all nodes to have the LVM annotation
+  vars:
+    _cifmw_lvms_storage_nodes: >-
+      {{
+        _cifmw_lvms_storage_cluster_lvmvolumegroupnodestatus_out.resources |
+        selectattr("metadata.name", "defined") |
+        map(attribute="metadata.name")
+      }}
+  environment:
+    KUBECONFIG: "{{ cifmw_openshift_kubeconfig }}"
+    PATH: "{{ cifmw_path }}"
+  when: _cifmw_lvms_storage_nodes | length > 0
+  ansible.builtin.command:
+    cmd: >-
+      oc get node
+      -l 'topology.topolvm.io/node in ({{ _cifmw_lvms_storage_nodes | join(", ") }})'
+      -o=jsonpath='{.items[*].metadata.annotations.capacity\.topolvm\.io/{{ cifmw_lvms_storage_class }}}'
+  changed_when: false
+  register: _cifmw_lvms_storage_nodes_annotations_out
+  retries: "{{ cifmw_lvms_wait_nodes_lvs_retries }}"
+  delay: "{{ cifmw_lvms_delay }}"
+  until:
+    - _cifmw_lvms_storage_nodes_annotations_out is defined
+    - _cifmw_lvms_storage_nodes_annotations_out.failed is false
+    - _cifmw_lvms_storage_nodes_annotations_out.stdout | trim | length != 0
+    - >-
+      _cifmw_lvms_storage_nodes_annotations_out.stdout | split(" ") |
+      map("int") | select("gt", 0) |
+      length == _cifmw_lvms_storage_nodes | length

@@ -1,0 +1,50 @@
+{% for key, value in cifmw_ceph_spec_host_to_ip.items() -%}
+---
+addr: {{ value }}
+hostname: {{ key }}
+labels:
+- _admin
+- mgr
+- mon
+- osd
+service_type: host
+{% endfor %}
+---
+placement:
+  hosts:
+{% for key, value in cifmw_ceph_spec_host_to_ip.items() %}
+  - {{ key }}
+{% endfor %}
+service_id: mon
+service_name: mon
+service_type: mon
+---
+placement:
+  hosts:
+{% for key, value in cifmw_ceph_spec_host_to_ip.items() %}
+  - {{ key }}
+{% endfor %}
+service_id: mgr
+service_name: mgr
+service_type: mgr
+---
+{% if cifmw_ceph_spec_data_devices %}
+{{ cifmw_ceph_spec_data_devices }}
+{% else %}
+data_devices:
+  paths:
+{% for i in range(0, cifmw_num_osds_perhost|int) %}
+  - /dev/ceph_vg{{ i }}/ceph_lv{{ i }}
+{% endfor %}
+{% endif %}
+{% if cifmw_ceph_spec_encryption %}
+encrypted: true
+{% endif %}
+placement:
+  hosts:
+{% for key, value in cifmw_ceph_spec_host_to_ip.items() %}
+  - {{ key }}
+{% endfor %}
+service_id: default_drive_group
+service_name: osd.default_drive_group
+service_type: osd

@@ -1,0 +1,125 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Ensure directories are present
+  ansible.builtin.file:
+    path: "{{ cifmw_os_must_gather_output_dir }}/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - logs
+
+- name: Construct project change list
+  ansible.builtin.set_fact:
+    zuul_change_list: "{{ zuul_change_list | default([]) + [item.project.short_name] }}"
+    cacheable: true
+  with_items: "{{ zuul['items'] }}"
+  when:
+    - zuul is defined
+    - "'change_url' in item"
+
+- name: Build openstack-must-gather image
+  ansible.builtin.import_tasks: build_openstack-must-gather_image.yml
+  when:
+    - zuul_change_list is defined
+    - "'openstack-must-gather' in zuul_change_list"
+
+- name: Check for oc command
+  cifmw.general.ci_script:
+    output_dir: "{{ cifmw_os_must_gather_output_dir }}/artifacts"
+    script: command -v oc
+  environment:
+    PATH: "{{ cifmw_path | default(ansible_env.PATH) }}"
+  register: oc_installed
+  ignore_errors: true
+
+- name: Running openstack-must-gather tool
+  when:
+    - oc_installed is defined
+    - oc_installed.rc == 0
+    - cifmw_openshift_kubeconfig is defined
+  block:
+    - name: Run openstack-must-gather command
+      environment:
+        KUBECONFIG: "{{ cifmw_openshift_kubeconfig }}"
+        PATH: "{{ cifmw_path }}"
+        SOS_EDPM: "all"
+        SOS_DECOMPRESS: "0"
+      cifmw.general.ci_script:
+        output_dir: "{{ cifmw_os_must_gather_output_dir }}/artifacts"
+        script: >-
+          oc adm must-gather --image {{ cifmw_os_must_gather_image }}
+          --timeout {{ cifmw_os_must_gather_timeout }}
+          --host-network={{ cifmw_os_must_gather_host_network }}
+          --dest-dir {{ cifmw_os_must_gather_output_dir }}/logs
+          -- ADDITIONAL_NAMESPACES={{ cifmw_os_must_gather_additional_namespaces }}
+          SOS_EDPM=$SOS_EDPM
+          SOS_DECOMPRESS=$SOS_DECOMPRESS
+          gather &> {{ cifmw_os_must_gather_output_dir }}/logs/os_must_gather.log
+
+    # directory name will be generated starting from cifmw_os_must_gather_image
+    # variable e.g.:
+    # EXAMPLE 1
+    # original value: "quay.io/openstack-k8s-operators/openstack-must-gather:latest"
+    # pattern value: "quay-io-openstack-k8s-operators-openstack-must-gather*"
+    # EXAMPLE 2
+    # original value: "foo.bar.example.com/repofoo/openstack-must-gather-rhel9:1.0.0"
+    # patterns value: "foo-bar-example-com-repofoo-openstack-must-gather-rhel9*"
+    # TODO: add molecule testing
+    - name: Get exact must-gather output folder name
+      ansible.builtin.find:
+        paths: "{{ cifmw_os_must_gather_output_dir }}/logs"
+        patterns: >-
+          {{
+            cifmw_os_must_gather_image |
+            ansible.builtin.split(':') |
+            first |
+            ansible.builtin.regex_replace('([.]|[/])', '-') ~ '*'
+          }}
+        file_type: directory
+      register: _must_gather_output_folder
+
+    - name: Move must-gather folder name to a fixed name
+      ansible.builtin.command:
+        cmd: >
+          mv "{{ _must_gather_output_folder.files[0].path  }}/"
+          "{{ cifmw_os_must_gather_output_dir }}/logs/openstack-k8s-operators-openstack-must-gather"
+
+  rescue:
+    - name: Create oc_inspect log directory
+      ansible.builtin.file:
+        path: "{{ cifmw_os_must_gather_output_dir }}/logs/oc_inspect"
+        state: directory
+        mode: "0755"
+
+    - name: Inspect the cluster after must-gather failure
+      ignore_errors: true # noqa: ignore-errors
+      environment:
+        KUBECONFIG: "{{ cifmw_openshift_kubeconfig }}"
+        PATH: "{{ cifmw_path }}"
+      cifmw.general.ci_script:
+        output_dir: "{{ cifmw_os_must_gather_output_dir }}/artifacts"
+        script: |
+          oc adm inspect namespace/{{ item }} --dest-dir={{ cifmw_os_must_gather_output_dir }}/logs/oc_inspect
+      loop: >-
+        {{
+          (
+            cifmw_os_must_gather_namespaces | default([]) +
+            (
+              cifmw_os_must_gather_additional_namespaces | split(',') | list
+            )
+          ) | unique
+        }}

@@ -1,0 +1,148 @@
+---
+- name: Generate and inject old networking-info based on networking_mapper
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Load networking-environment-definition
+      ansible.builtin.include_vars:
+        file: "/etc/ci/env/networking-environment-definition.yml"
+        name: _net_env
+
+    - name: Map networking_mapper environment to networking-info
+      become: true
+      ansible.builtin.copy:
+        mode: "0644"
+        dest: "/etc/ci/env/networking-info.yml"
+        content: |-
+          crc_ci_bootstrap_networks_out:
+          {% for instance in _net_env.instances.keys() %}
+            {{ instance | replace('controller-0', 'controller') }}:
+          {%   for net in _net_env.instances[instance].networks.keys() %}
+          {%     if net == 'ctlplane' %}
+              default:
+                connection: ci-private-network
+                gw: {{ _net_env.networks[net].gw_v4 }}
+          {%     else %}
+              {{ net | replace('internalapi', 'internal-api') }}:
+                vlan: {{ _net_env.networks[net].vlan_id | default('foo') }}
+          {%     endif %}
+                iface: {{ _net_env.instances[instance]['networks'][net]['interface_name']}}
+                ip: {{ _net_env.instances[instance]['networks'][net]['ip_v4'] }}/24
+                mac: {{ _net_env.instances[instance]['networks'][net]['mac_addr'] }}
+                mtu: {{ _net_env.instances[instance]['networks'][net]['mtu'] }}
+                skip_nm: false
+          {%   endfor %}
+          {% endfor %}
+
+    - name: Configure NetworkManager to not override /etc/resolv.conf
+      become: true
+      community.general.ini_file:
+        path: "/etc/NetworkManager/NetworkManager.conf"
+        option: dns
+        section: main
+        value: none
+        mode: "0644"
+
+    - name: Restart NetworkManager to ensure we apply new configuration
+      become: true
+      ansible.builtin.service:
+        name: NetworkManager
+        state: restarted
+
+    - name: Inject custom nameservers in /etc/resolv.conf
+      become: true
+      vars:
+        _pub_resolver: >-
+          {{ _net_env.networks.ctlplane.dns_v4.0 }}
+        _crc_resolver: >-
+          {{ _net_env.networks.ctlplane.tools.metallb.ipv4_ranges.0.start }}
+      ansible.builtin.copy:
+        mode: "0644"
+        dest: "/etc/resolv.conf"
+        content: |
+          nameserver {{ _crc_resolver }}
+          nameserver {{ _pub_resolver }}
+
+- name: Prepare computes for next steps
+  hosts: computes
+  gather_facts: false
+  tasks:
+    - name: Ensure /etc/ci/env directory exists
+      become: true
+      ansible.builtin.file:
+        path: /etc/ci/env
+        state: directory
+        mode: "0755"
+
+    - name: Push networking-info.yml
+      become: true
+      ansible.builtin.copy:
+        src: /etc/ci/env/networking-info.yml
+        dest: /etc/ci/env/networking-info.yml
+        mode: "0644"
+
+    - name: Disable cloud-init
+      become: true
+      ansible.builtin.service:
+        name: cloud-init
+        enabled: false
+        state: stopped
+
+- name: Configure some last content on controller
+  hosts: localhost
+  gather_facts: true
+  tasks:
+    - name: .crc directory tree
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/.crc/machines/crc/"
+        state: directory
+        mode: "0755"
+
+    - name: Copy kubeconfig
+      ansible.builtin.copy:
+        mode: "0644"
+        remote_src: true
+        src: "{{ ansible_user_dir }}/.kube/config"
+        dest: "{{ ansible_user_dir }}/.crc/machines/crc/kubeconfig"
+
+    - name: Create artifact directory
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/ci-framework-data/artifacts/parameters"
+        state: directory
+        mode: "0755"
+
+    - name: Inject CRC hostname
+      ansible.builtin.copy:
+        mode: "0644"
+        dest: "{{ ansible_user_dir }}/ci-framework-data/artifacts/parameters/crc-hostname.yml"
+        content: |-
+          cifmw_crc_hostname: crc-0
+
+    - name: Ensure controller-0 knows about remote SSH key
+      block:
+        - name: Inject localhost key
+          ansible.builtin.shell:
+            cmd: >-
+              ssh-keyscan localhost > ~/.ssh/known_hosts
+
+        - name: Loop on all hosts to get their host SSH key
+          ansible.builtin.shell:
+            cmd: >-
+              ssh-keyscan {{ hostvars[item].ansible_host }}
+              >> ~/.ssh/known_hosts
+          loop: >-
+            {{
+              hostvars | dict2items |
+              selectattr("value.ansible_host", "defined") |
+              map(attribute="key")
+            }}
+
+    - name: Wait for CRC to be ready
+      register: oc_login_ok
+      ansible.builtin.command:
+        cmd: ~/bin/oc get pods -A
+      retries: 20
+      delay: 15
+      until:
+        - oc_login_ok is defined
+        - oc_login_ok.rc == 0

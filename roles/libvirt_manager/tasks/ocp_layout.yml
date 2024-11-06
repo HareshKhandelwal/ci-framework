@@ -1,0 +1,113 @@
+---
+# TODO(hjensas): We should have a dedicated role for firewall
+- name: Enable forwarding in the libvirt zone
+  when: cifmw_libvirt_manager_firewalld_zone_libvirt_forward | default(true) | bool
+  become: true
+  notify: Restart firewalld
+  ansible.builtin.command:
+    cmd: >-
+       firewall-cmd --permanent --zone libvirt --add-forward
+
+- name: Enable masquerading for public traffic
+  when: cifmw_libvirt_manager_firewalld_default_zone_masquerade | default(true) | bool
+  become: true
+  ansible.posix.firewalld:
+    masquerade: true
+    zone: "{{ cifmw_libvirt_manager_firewalld_default_zone }}"
+    permanent: true
+    immediate: true
+    state: enabled
+
+- name: Manage virtual resources
+  vars:
+    cifmw_libvirt_manager_storage_pool: >-
+      {{ cifmw_libvirt_manager_ocp_pool }}
+    cifmw_libvirt_manager_pool_dir: >-
+      {{ cifmw_libvirt_manager_ocp_pool_dir }}
+    _layout_overrides:
+      image_local_dir: "{{ cifmw_libvirt_manager_basedir }}/images"
+      disksize: "50"
+      disk_file_name: "blank"
+    _ocp_layout:
+      vms:
+        ocp_master: >-
+          {{
+            _cifmw_libvirt_manager_layout.vms.ocp |
+            combine(_layout_overrides, recursive=true) |
+            ansible.utils.remove_keys(target="xml_paths")
+          }}
+        ocp_worker: >-
+          {{
+            _cifmw_libvirt_manager_layout.vms.ocp_worker |
+            default({'amount': 0}) |
+            combine(_layout_overrides, recursive=true) |
+            ansible.utils.remove_keys(target="xml_paths")
+          }}
+    _vm_list: >-
+      {% set _vm_list = {} -%}
+      {% set _range = []   -%}
+      {% for _type in _ocp_layout.vms.keys()                -%}
+      {%   set _amount = _ocp_layout.vms[_type].amount |
+                         default(1) | int                   -%}
+      {%   set _range = range(0, _amount)                   -%}
+      {%   set _vms = [_type | replace('_', '-')] |
+                      product(_range) | map('join', '-')    -%}
+      {%   set _map = dict(_vms | zip([_type] * _amount))   -%}
+      {%   set _ = _vm_list.update(_map)                    -%}
+      {% endfor -%}
+      {{ _vm_list }}
+  block:
+    - name: Ensure needed directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        mode: "0755"
+        state: directory
+      loop:
+        - "{{ cifmw_libvirt_manager_basedir }}/images"
+        - "{{ cifmw_libvirt_manager_ocp_pool_dir }}"
+
+    - name: Create pool in libvirt
+      vars:
+        action: 'create'
+      ansible.builtin.import_tasks: "storage_pool.yml"
+
+    - name: Create blank images for OCP cluster resources
+      vars:
+        vm: "{{ _vm.key }}"
+        vm_type: "{{ _vm.value }}"
+        vm_data: >-
+          {{
+            _ocp_layout.vms[vm_type]
+          }}
+        is_base_img: true
+      ansible.builtin.include_role:
+        name: "libvirt_manager"
+        tasks_from: "create_vms.yml"
+      loop: "{{ _vm_list | dict2items }}"
+      loop_control:
+        loop_var: _vm
+
+    # vBMC is started in reproducer/ocp_layout.yml tasks file.
+    - name: Verify vBMC status
+      ansible.builtin.import_role:
+        name: "virtualbmc"
+        tasks_from: "verify.yml"
+
+    - name: Create VBMC entities for OCP
+      vars:
+        cifmw_virtualbmc_machine: "cifmw-{{ item.key }}"
+        cifmw_virtualbmc_ipmi_port: "{{ 51881 + index }}"
+        cifmw_virtualbmc_action: "add"
+        cifmw_virtualbmc_ipmi_address: "ipmi.utility"
+      ansible.builtin.include_role:
+        name: "virtualbmc"
+        tasks_from: "manage_host.yml"
+      loop: "{{ _vm_list | dict2items }}"
+      loop_control:
+        index_var: index
+        label: "{{ item.key }}"
+
+    - name: Expose OCP cluster members
+      ansible.builtin.set_fact:
+        _cifmw_libvirt_manager_ocp_cluster: >-
+          {{ _vm_list | dict2items | map(attribute='key') }}

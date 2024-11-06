@@ -1,0 +1,53 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Create dashboard spec
+  ansible.builtin.template:
+    src: templates/ceph_monitoring_stack.yml.j2
+    dest: "{{ cifmw_ceph_dashboard_spec_path }}"
+    mode: '0644'
+    force: true
+
+- name: Config ssl cert(s) and key(s) for the exposed components
+  become: true
+  when: cifmw_cephadm_dashboard_crt | length > 0 and
+        cifmw_cephadm_dashboard_key | length > 0
+  block:
+    - name: Get ceph_cli
+      ansible.builtin.include_tasks: ceph_cli.yml
+      vars:
+        mount_certs: true
+
+    - name: Import grafana certificate file
+      ansible.builtin.command: "{{ cifmw_cephadm_ceph_cli }} config-key set mgr/cephadm/grafana_crt -i {{ cifmw_cephadm_dashboard_crt }}"
+      changed_when: false
+
+    - name: Import grafana certificate key
+      ansible.builtin.command: "{{ cifmw_cephadm_ceph_cli }} config-key set mgr/cephadm/grafana_key -i {{ cifmw_cephadm_dashboard_key }}"
+      changed_when: false
+
+- name: Get ceph_cli
+  ansible.builtin.include_tasks: ceph_cli.yml
+  vars:
+    mount_spec: true
+    cifmw_cephadm_spec: "{{ cifmw_ceph_dashboard_spec_path }}"
+
+- name: Apply spec
+  ansible.builtin.command: "{{ cifmw_cephadm_ceph_cli }} orch apply --in-file {{ cifmw_cephadm_container_spec }}"
+  become: true
+
+- name: Run dashboard tasks
+  ansible.builtin.include_tasks: dashboard/dashboard.yml

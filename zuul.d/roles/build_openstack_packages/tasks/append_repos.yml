@@ -1,0 +1,12 @@
+---
+- name: Slurp the repo files and append
+  ansible.builtin.slurp:
+    src: "{{ _repo_path }}"
+  register: _repo_data
+
+- name: Store the all repo data in a single list
+  ansible.builtin.set_fact:
+    _repo_contents:
+      "{{ _repo_contents|default([]) +
+        [ _repo_data['content'] | b64decode ]
+       }}"

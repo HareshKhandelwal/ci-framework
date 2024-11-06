@@ -1,0 +1,107 @@
+---
+- name: "Push ssh jumper/configuration for {{ vm }}"
+  vars:
+    _ocp_name: >-
+      {{
+        vm |
+        replace('ocp-', '')
+      }}
+    _hostname: >-
+      {{
+        (vm is match('^ocp.*')) |
+        ternary(_ocp_name, vm)
+      }}
+    _type_id: >-
+      {{
+        vm |
+        regex_replace('^.*-([0-9]+)$',
+                      vm_type ~ '-\1')
+      }}
+    _user: "{{ 'core' if vm is match('^(crc|ocp).*') else 'zuul' }}"
+    dataset:
+      ssh_dir: "{{ ansible_user_dir }}/.ssh"
+      user: "{{ _user }}"
+      hostname: "{{ _hostname }}.utility"
+      patterns:
+        - "{{ vm }}"
+        - "{{ _type_id }}"
+        - "{{ _type_id }}.utility"
+        - "{{ _type_id }}.{{ inventory_hostname }}"
+        - "{{ _hostname }}"
+        - "{{ vm_con_name }}"
+        - "{{ _hostname }}.{{ inventory_hostname }}"
+    proxy_data:
+      target: localhost
+      proxy_host: "{{ ansible_host | default(inventory_hostname) }}"
+      proxy_user: "{{ ansible_user | default(lookup('env', 'USER')) }}"
+      ssh_dir: "{{ lookup('env', 'HOME') }}/.ssh"
+    ssh_ident:
+      identity_file: >-
+        {{
+          cifmw_libvirt_manager_basedir ~ '/artifacts/cifmw_ocp_access_key' if vm_type is match('^ocp.*') else
+          ansible_user_dir ~ '/.crc/machines/crc/id_ecdsa' if vm_type == 'crc' else
+          ansible_user_dir ~ '/.ssh/cifmw_reproducer_key'
+        }}
+    config: >-
+      {% set output = [] -%}
+      {% if inventory_hostname not in ['localhost', 'instance'] -%}
+      {% set _ = output.append(dataset | combine(proxy_data) ) -%}
+      {% endif -%}
+      {% set _ = output.append(dataset | combine(ssh_ident)) -%}
+      {{ output }}
+    cifmw_ssh_jumper_config: "{{ config }}"
+  ansible.builtin.include_role:
+    name: "ssh_jumper"
+
+# TODO: consider ignition/butane instead
+- name: "Configure ssh access on VM {{ vm }}"
+  when:
+    - vm is match('^(ocp|crc).*')
+    - _cifmw_libvirt_manager_layout.vms[vm_type].start | default(true)
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      cat ~/.ssh/authorized_keys |
+      ssh -v core@{{ vm_con_name }} "cat >> ~/.ssh/authorized_keys"
+  retries: 5
+  delay: 10
+  register: _ssh_access
+  until: _ssh_access.rc == 0
+
+# TODO: consider https://docs.fedoraproject.org/en-US/fedora-coreos/storage/#_sizing_the_root_partition
+- name: Ensure we grow volume for OCP cluster members
+  when:
+    - vm is match('^ocp.*')
+    - _cifmw_libvirt_manager_layout.vms[vm_type].start | default(true)
+  vars:
+    _root_part: "{{ vm_data.root_part_id | default('1') }}"
+  ansible.builtin.shell:
+    cmd: >-
+      ssh core@{{ vm_con_name }}
+      "sudo growpart /dev/sda {{ _root_part }}; sudo xfs_growfs /;"
+
+- name: "Inject private key on hosts {{ vm }}"
+  when:
+    - vm_type is match('^controller.*$')
+    - _cifmw_libvirt_manager_layout.vms[vm_type].start | default(true)
+  delegate_to: "{{ vm_con_name }}"
+  remote_user: "{{ _init_admin_user }}"
+  ansible.builtin.copy:
+    dest: "/home/zuul/.ssh/id_cifw"
+    content: "{{ priv_key }}"
+    owner: zuul
+    group: zuul
+    mode: "0400"
+
+- name: "Inject public key on hosts {{ vm }}"
+  when:
+    - vm_type is match('^controller.*$')
+    - _cifmw_libvirt_manager_layout.vms[vm_type].start | default(true)
+  delegate_to: "{{ vm_con_name }}"
+  remote_user: "{{ _init_admin_user }}"
+  ansible.builtin.copy:
+    dest: "/home/zuul/.ssh/id_cifw.pub"
+    content: "{{ pub_key }}"
+    owner: zuul
+    group: zuul
+    mode: "0444"

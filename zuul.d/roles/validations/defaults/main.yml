@@ -1,0 +1,51 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+
+# All variables intended for modification should be placed in this file.
+# All variables within this role should have a prefix of "cifmw_validations"
+
+
+# cifmw_validations_list can be used to provide a list of validations that should
+# be executed For example.
+# cifmw_validations_list:
+#   - edpm/hugepages_and_reboot.yml
+#   - nfv/dpdk_and_sriov.yml
+#   - storage/hci_and_res_mem.yml
+cifmw_validations_list: []
+
+# cifmw_validations_run_all will find all validations under the tasks directory, save
+# them to a variable called found_validations and the sequentially execute each of them.
+cifmw_validations_run_all: false
+
+cifmw_validations_default_path: "{{ role_path }}/tasks"
+
+# cifmw_validations_edpm_check_node is the node that we will validate for edpm jobs. We
+# achieve this by delegating_to the check node and executing the required commands to
+# validate that our desired state change has been achieved.
+cifmw_validations_edpm_check_node: compute-0
+
+cifmw_validations_basedir: "{{ cifmw_basedir | default(ansible_user_dir ~ '/ci-framework-data') }}"
+
+cifmw_validations_namespace: "openstack"
+
+cifmw_validations_hotfixed_edpm_nova_compute_image: quay.io/podified-antelope-centos9/openstack-nova-compute:current-podified
+cifmw_validations_custom_nova_service: "nova-custom-ceph"
+
+# variables needed for scaledown
+cifmw_validations_edpm_scale_down_hostname: compute-2.ctlplane.example.com
+cifmw_validations_edpm_scale_down_nodename: edpm-compute-2
+cifmw_validations_timeout: 100

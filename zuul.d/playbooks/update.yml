@@ -1,0 +1,71 @@
+- name: Run pre_update hooks
+  vars:
+    step: pre_update
+  ansible.builtin.import_playbook: ./hooks.yml
+
+- name: Add comptatibility support to install_yamls
+  hosts: "{{ cifmw_target_host | default('localhost') }}"
+  gather_facts: false
+  tasks:
+    - name: Comptatibility layer with install_yamls
+      when:
+        - cifmw_architecture_scenario is defined
+      block:
+        - name: Prepare install_yamls make targets
+          ansible.builtin.include_role:
+            name: install_yamls
+        - name: Make a viable cifmw_install_yamls_environment
+          ansible.builtin.set_fact:
+            cifmw_install_yamls_environment: "{{ cifmw_install_yamls_environment | default({}) }}"
+        - name: Add a default value cifmw_install_yamls_defaults
+          ansible.builtin.set_fact:
+            cifmw_install_yamls_defaults: "{{ cifmw_install_yamls_defaults | default({'OPERATOR_NAMESPACE': 'openstack-operators'}) }}"
+
+- name: Update repos and openstack services containers
+  hosts: "{{ cifmw_target_host | default('localhost') }}"
+  gather_facts: false
+  tasks:
+    - name: Copy repos to before_update_repos directory
+      ansible.builtin.copy:
+        remote_src: true
+        src: "{{ cifmw_basedir }}/artifacts/repositories/"
+        dest: "{{ cifmw_basedir }}/artifacts/before_update_repos/"
+
+    - name: Run repo_setup
+      ansible.builtin.include_role:
+        name: repo_setup
+
+    - name: Update all openstack services containers env vars in meta operator with tag from delorean and update OPENSTACK_RELEASE_VERSION
+      vars:
+        cifmw_set_openstack_containers_dlrn_md5_path: "{{ cifmw_basedir }}/artifacts/repositories/delorean.repo.md5"
+        cifmw_set_openstack_containers_tag_from_md5: true
+        cifmw_set_openstack_containers_extra_vars: "{{ cifmw_edpm_prepare_extra_vars }}"
+        cifmw_set_openstack_containers_openstack_version_change: true
+        cifmw_set_openstack_containers_openstack_final_env: "operator_env_after_update.txt"
+      ansible.builtin.include_role:
+        name: set_openstack_containers
+
+- name: Sync repos for controller to compute
+  hosts: computes
+  gather_facts: true
+  tasks:
+    - name: Copy repositories from controller to computes
+      become: true
+      ansible.builtin.copy:
+        dest: "/etc/yum.repos.d/"
+        src: "{{ cifmw_basedir }}/artifacts/repositories/"
+
+- name: Run update role
+  hosts: "{{ cifmw_target_host | default('localhost') }}"
+  gather_facts: false
+  tasks:
+    - name: Run update
+      tags:
+        - update
+      ansible.builtin.import_role:
+        name: update
+
+- name: Run post_update hooks
+  vars:
+    step: post_update
+  ansible.builtin.import_playbook: ./hooks.yml

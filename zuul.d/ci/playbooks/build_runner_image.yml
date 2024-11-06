@@ -1,0 +1,47 @@
+---
+- name: "Run ci/playbooks/build_runner_image.yml"
+  hosts: "{{ cifmw_zuul_target_host | default('all') }}"
+  tasks:
+    - name: Filter out host if needed
+      when:
+        - cifmw_zuul_target_host is defined
+        - cifmw_zuul_target_host != 'all'
+        - inventory_hostname != cifmw_zuul_target_host
+      ansible.builtin.meta: end_host
+
+    - name: Get git tag for image tagging
+      register: edpm_ansible_tag
+      ansible.builtin.command:
+        cmd: git show-ref --head --hash head # noqa: command-instead-of-module
+        chdir: "{{ ansible_user_dir }}/src/github.com/openstack-k8s-operators/edpm-ansible"
+
+    - name: Set openstack-runner image
+      ansible.builtin.set_fact:
+        ansibleee_runner_img: "quay.rdoproject.org/openstack-k8s-operators/openstack-ansibleee-runner:{{ edpm_ansible_tag.stdout | trim }}"
+
+    - name: Build openstack-runner image
+      community.general.make:
+        chdir: "{{ ansible_user_dir }}/src/github.com/openstack-k8s-operators/edpm-ansible"
+        target: openstack_ansibleee_build
+        params:
+          IMG: "{{ ansibleee_runner_img }}"
+
+    - name: Push openstack-runner image
+      community.general.make:
+        chdir: "{{ ansible_user_dir }}/src/github.com/openstack-k8s-operators/edpm-ansible"
+        target: openstack_ansibleee_push
+        params:
+          IMG: "{{ ansibleee_runner_img }}"
+
+    - name: Make sure ci-framework directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/ci-framework-data/artifacts"
+        state: directory
+        mode: "0755"
+
+    - name: Create EDPM ansible var file
+      ansible.builtin.copy:
+        mode: "0644"
+        content: |
+          cifmw_update_containers_ansibleee_image_url: "{{ ansibleee_runner_img }}"
+        dest: "{{ ansible_user_dir }}/ci-framework-data/artifacts/edpm-ansible.yml"

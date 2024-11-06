@@ -1,0 +1,12 @@
+[Unit]
+Description=CIFMW dnsmasq server.
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/dnsmasq -C /etc/cifmw-dnsmasq.conf
+ExecReload=/usr/bin/kill -HUP $MAINPID
+Type=forking
+PIDFile=/run/cifmw-dnsmasq.pid
+
+[Install]
+WantedBy=multi-user.target

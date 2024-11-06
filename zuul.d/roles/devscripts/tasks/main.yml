@@ -1,0 +1,74 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Build configuration
+  tags:
+    - always
+  ansible.builtin.include_tasks:
+    file: build_config.yml
+    apply:
+      tags:
+        - always
+
+- name: Check and prepare the environment
+  tags:
+    - always
+  ansible.builtin.import_tasks: 100_pre.yml
+
+- name: Deploy OpenShift cluster
+  tags:
+    - devscripts_deploy
+    - bootstrap
+  when:
+    - not cifmw_devscripts_dry_run | bool
+    - >-
+      (
+        not (
+          (cifmw_devscripts_ocp_comply | bool) or
+          (cifmw_devscripts_ocp_online | bool)
+        )
+      )
+  vars:
+    _log_src: >-
+      {{
+        (cifmw_devscripts_repo_dir, 'logs' ) | path_join
+      }}
+  block:
+    - name: Run devscripts make all
+      cifmw.general.ci_script:
+        chdir: "{{ cifmw_devscripts_repo_dir }}"
+        output_dir: "{{ cifmw_devscripts_artifacts_dir }}"
+        script: "timeout {{ cifmw_devscripts_installer_timeout }} make all"
+  always:
+    - name: Gather logs
+      register: _deploy_logs
+      ansible.builtin.find:
+        paths: "{{ _log_src }}"
+        patterns: "*.log"
+
+    - name: Copy all generated logs
+      ansible.builtin.copy:
+        dest: "{{ cifmw_devscripts_logs_dir }}/{{ item.path | basename }}"
+        remote_src: true
+        src: "{{ item.path }}"
+      loop: "{{ _deploy_logs.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+- name: Executing dev-scripts post-install tasks.
+  when:
+    - not cifmw_devscripts_dry_run | bool
+  ansible.builtin.include_tasks: 300_post.yml

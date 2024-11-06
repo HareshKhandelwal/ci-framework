@@ -1,0 +1,54 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+
+# While options found within the vars/ path can be overridden using extra
+# vars, items within this path are considered part of the role and not
+# intended to be modified.
+
+# All variables within this role should have a prefix of "cifmw_devscripts"
+
+cifmw_devscripts_packages:
+  - ipmitool
+  - NetworkManager-initscripts-updown
+  - patch
+  - python3-jmespath
+
+cifmw_devscripts_repo: "https://github.com/openshift-metal3/dev-scripts.git"
+# Note(Chandan): Pinning devscripts at https://github.com/openshift-metal3/dev-scripts/commit/5756e9cf094d8c4256461b0fd4242cd84dea8c93
+# as https://github.com/openshift-metal3/dev-scripts/pull/1694 broke IPv6 job
+# More details are here: https://issues.redhat.com/browse/OSPCIX-443.
+# We should unpin it as more updates needed from devscript.
+cifmw_devscripts_repo_branch: 5756e9cf094d8c4256461b0fd4242cd84dea8c93
+
+cifmw_devscripts_config_defaults:
+  working_dir: "/home/dev-scripts"
+  assets_extra_folder: "/home/dev-scripts/assets"
+  openshift_release_type: "ga"
+  openshift_version: "4.16.0"
+  cluster_name: "ocp"
+  base_domain: "openstack.lab"
+  ntp_servers: "clock.corp.redhat.com"
+  provisioning_network_profile: "Managed"
+  provisioning_network: "172.22.0.0/24"
+  cluster_subnet_v4: "192.168.16.0/20"
+  cluster_host_prefix_v4: "22"
+  service_subnet_v4: "172.30.0.0/16"
+  external_subnet_v4: "192.168.111.0/24"
+  num_masters: 3
+  num_workers: 0
+  ip_stack: v4  # TODO(Harald) Check if we can get rid of it - see 133_host_network.yml
+  network_type: "OVNKubernetes"

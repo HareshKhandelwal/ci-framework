@@ -1,0 +1,107 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+
+# All variables intended for modification should be placed in this file.
+# All variables within this role should have a prefix of "cifmw_bop"
+cifmw_bop_dlrn_deps:
+  - createrepo
+  - gcc
+  - git
+  - libffi-devel
+  - mock
+  - openssl-devel
+  - redhat-rpm-config
+  - rsync
+  - rpm-build
+  - rpmdevtools
+  - sqlite
+  - python3-libselinux
+
+cifmw_bop_build_repo_dir: "{{ cifmw_basedir | default(ansible_user_dir ~ '/ci-framework-data') }}/logs"
+cifmw_bop_dlrn_repo_url: "https://github.com/openstack-packages/DLRN.git"
+cifmw_bop_dlrn_from_source: false
+cifmw_bop_dlrn_venv: "{{ ansible_user_dir }}/dlrn_venv"
+
+cifmw_bop_rdoinfo_repo_url: https://github.com/redhat-openstack/rdoinfo
+cifmw_bop_rdoinfo_repo_name: rdoinfo
+cifmw_bop_patch_rebaser_repo_url: "https://github.com/release-depot/patch_rebaser.git"
+
+cifmw_bop_initial_dlrn_config: centos9-stream
+
+cifmw_bop_dlrn_target: centos9-stream
+
+cifmw_bop_dlrn_baseurl: "https://trunk.rdoproject.org/centos9-antelope"
+cifmw_bop_use_components: 1
+
+cifmw_bop_yum_repos_dir: "/etc/yum.repos.d"
+
+cifmw_bop_openstack_release: antelope
+cifmw_bop_openstack_project_path: ''
+
+cifmw_bop_gating_repo_dest: "{{ cifmw_bop_build_repo_dir }}"
+cifmw_bop_dlrn_cleanup: false
+
+cifmw_bop_timestamper_cmd: >-
+  | awk '{ print strftime("%Y-%m-%d %H:%M:%S |"), $0; fflush(); }'
+
+cifmw_bop_branchless_projects:
+  - openstack-k8s-operators/tcib
+  - os-net-config/os-net-config
+  - x/whitebox-neutron-tempest-plugin
+  - openstack/tempest
+  - openstack/neutron-tempest-plugin
+
+cifmw_bop_change_list: []
+
+cifmw_bop_release_mapping:
+  master: master
+  antelope: stable/2023.1
+
+cifmw_bop_skipped_projects:
+  - testproject
+  - openstack-k8s-operators/ci-framework
+  - opendev.org/zuul/zuul-jobs
+  - openstack-k8s-operators/barbican-operator
+  - openstack-k8s-operators/cinder-operator
+  - openstack-k8s-operators/designate-operator
+  - openstack-k8s-operators/glance-operator
+  - openstack-k8s-operators/heat-operator
+  - openstack-k8s-operators/horizon-operator
+  - openstack-k8s-operators/infra-operator
+  - openstack-k8s-operators/install_yamls
+  - openstack-k8s-operators/ironic-operator
+  - openstack-k8s-operators/keystone-operator
+  - openstack-k8s-operators/manila-operator
+  - openstack-k8s-operators/mariadb-operator
+  - openstack-k8s-operators/neutron-operator
+  - openstack-k8s-operators/nova-operator
+  - openstack-k8s-operators/octavia-operator
+  - openstack-k8s-operators/openstack-ansibleee-operator
+  - openstack-k8s-operators/openstack-baremetal-operator
+  - openstack-k8s-operators/openstack-operator
+  - openstack-k8s-operators/ovn-operator
+  - openstack-k8s-operators/placement-operator
+  - openstack-k8s-operators/repo-setup
+  - openstack-k8s-operators/swift-operator
+  - openstack-k8s-operators/telemetry-operator
+
+cifmw_bop_gating_port: 8766
+
+# Downstream only variables:
+#
+# cifmw_bop_rhospkg_repo_url
+# cifmw_bop_osp_release: rhos-18.0

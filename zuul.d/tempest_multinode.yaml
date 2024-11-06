@@ -1,0 +1,125 @@
+---
+- job:
+    name: cifmw-base-multinode-tempest
+    parent: cifmw-podified-multinode-edpm-base-crc
+    timeout: 5400
+    abstract: true
+    nodeset: centos-9-medium-crc-extracted-2-39-0-3xl
+    description: |
+      Base multinode job definition for running test-operator.
+    vars:
+      zuul_log_collection: true
+      cifmw_deploy_edpm: false
+      # disable operator build
+      cifmw_operator_build_meta_build: false
+      cifmw_operator_build_operators: []
+      cifmw_run_test_role: test_operator
+      cifmw_test_operator_tempest_tests_include_override_scenario: true
+    extra-vars:
+      crc_ci_bootstrap_cloud_name: "{{ nodepool.cloud | replace('-nodepool-tripleo','') }}"
+      crc_ci_bootstrap_networking:
+        networks:
+          default:
+            range: 192.168.122.0/24
+            mtu: "{{ ('ibm' in nodepool.cloud) | ternary('1440', '1500') }}"
+            router_net: "{{ ('ibm' in nodepool.cloud) | ternary('hostonly', 'public') }}"
+          internal-api:
+            vlan: 20
+            range: 172.17.0.0/24
+          storage:
+            vlan: 21
+            range: 172.18.0.0/24
+          tenant:
+            vlan: 22
+            range: 172.19.0.0/24
+        instances:
+          controller:
+            networks:
+              default:
+                ip: 192.168.122.11
+          crc:
+            networks:
+              default:
+                ip: 192.168.122.10
+              internal-api:
+                ip: 172.17.0.5
+              storage:
+                ip: 172.18.0.5
+              tenant:
+                ip: 172.19.0.5
+      cifmw_extras:
+        - '@scenarios/centos-9/ci.yml'
+        - '@scenarios/centos-9/multinode-ci.yml'
+        - '@scenarios/centos-9/ceph_backends.yml'
+    pre-run:
+      - ci/playbooks/e2e-prepare.yml
+    run:
+      - ci/playbooks/e2e-run.yml
+    required-projects:
+      - github.com/openstack-k8s-operators/install_yamls
+      - openstack-k8s-operators/ci-framework
+      - openstack-k8s-operators/infra-operator
+      - openstack-k8s-operators/openstack-baremetal-operator
+      - openstack-k8s-operators/openstack-operator
+      - openstack-k8s-operators/repo-setup
+      - openstack-k8s-operators/edpm-ansible
+
+- job:
+    name: podified-multinode-edpm-deployment-crc-tempest
+    parent: podified-multinode-edpm-deployment-crc
+    vars:
+      cifmw_extras:
+        - '@scenarios/centos-9/ci.yml'
+        - '@scenarios/centos-9/multinode-ci.yml'
+        - '@scenarios/centos-9/ceph_backends.yml'
+      cifmw_test_operator_tempest_include_list: |
+        ^tempest.api.identity.*.v3
+        ^tempest.api.volume
+        ^tempest.api.network.*
+        ^tempest.api.compute.*
+        ^manila_tempest_tests.tests.api
+        ^ironic_tempest_plugin.tests.api
+      cifmw_test_operator_tempest_exclude_list: |
+        # identity
+        test_credentials_create_get_update_delete
+        test_credentials_list_delete
+        test_rescope_token
+        test_update_user_password
+        # compute
+        tempest.api.compute.volumes.test_volumes_list
+        tempest.api.compute.admin.test_volume.AttachSCSIVolumeTestJSON
+        tempest.api.compute.admin.test_volumes_negative.VolumesAdminNegativeTest
+        tempest.api.compute.servers.test_device_tagging
+        tempest.api.compute.volumes.test_volumes_get
+        tempest.api.compute.servers.test_server_rescue.ServerBootFromVolumeStableRescueTest
+        tempest.api.compute.servers.test_create_server.ServersTestBootFromVolume
+        tempest.api.compute.servers.test_server_actions.ServerActionsV293TestJSON
+        tempest.api.compute.admin.test_live_migration.LiveMigrationTest.test_live_migration_with_trunk
+        tempest.api.compute.admin.test_assisted_volume_snapshots.VolumesAssistedSnapshotsTest.test_volume_assisted_snapshot_create_delete
+        tempest.api.compute.servers.test_server_rescue.ServerStableDeviceRescueTestIDE
+        tempest.api.compute.servers.test_delete_server.DeleteServersTestJSON.test_delete_server_while_in_attached_volume
+        tempest.api.compute.servers.test_delete_server.DeleteServersTestJSON.test_delete_server_while_in_shelved_state
+        tempest.api.compute.servers.test_server_rescue_negative.ServerRescueNegativeTestJSON
+        tempest.api.compute.servers.test_server_actions.ServerActionsTestOtherA
+        tempest.api.compute.volumes.test_attach_volume.AttachVolumeTestJSON.test_attach_detach_volume
+        tempest.api.compute.volumes.test_attach_volume.AttachVolumeTestJSON.test_list_get_volume_attachments
+        tempest.api.compute.volumes.test_attach_volume_negative.AttachVolumeNegativeTest.test_attach_attached_volume_to_same_server
+        tempest.api.compute.volumes.test_attach_volume_negative.AttachVolumeNegativeTest.test_delete_attached_volume
+        tempest.api.compute.volumes.test_attach_volume.AttachVolumeShelveTestJSON.test_attach_volume_shelved_or_offload_server
+        tempest.api.compute.volumes.test_attach_volume_negative.AttachVolumeNegativeTest.test_attach_attached_volume_to_different_server
+        # volume
+        tempest.api.volume.admin.test_volume_types.VolumeTypesTest.test_volume_crud_with_volume_type_and_extra_specs
+        tempest.api.volume.test_volumes_backup.VolumesBackupsTest.test_backup_create_attached_volume
+        tempest.api.volume.test_volumes_backup.VolumesBackupsTest.test_volume_backup_incremental
+        tempest.api.volume.test_volumes_snapshots.VolumesSnapshotTestJSON.test_snapshot_create_delete_with_volume_in_use
+        tempest.api.volume.test_volumes_snapshots.VolumesSnapshotTestJSON.test_snapshot_create_offline_delete_online
+
+- job:
+    name: cifmw-multinode-tempest
+    parent: podified-multinode-edpm-deployment-crc-tempest
+    files:
+      - ^roles/test_operator
+      - ^scenarios/centos-9/multinode-ci.yml
+      - ^scenarios/centos-9/ci.yml
+      - ^scenarios/centos-9/ceph_backends.yml
+      - ^zuul.d/tempest_multinode.yaml

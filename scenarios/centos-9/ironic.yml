@@ -1,0 +1,24 @@
+---
+pre_deploy:
+  - name: Kustomize OpenStack CR
+    type: playbook
+    source: control_plane_ironic.yml
+
+cifmw_services_ironic_enabled: true
+
+cifmw_tempest_container: openstack-tempest-all
+
+cifmw_tempest_default_groups: &test_operator_list
+  - ironic-operator
+cifmw_tempest_default_jobs: *test_operator_list
+
+cifmw_tempest_tests_allowed_override_scenario: true
+
+cifmw_tempest_tempestconf_profile:
+  create: true
+  debug: true
+  os_cloud: default
+  overrides:
+    identity.v3_endpoint_type: public
+    enforce_scope.ironic: true
+    enforce_scope.ironic_inspector: true

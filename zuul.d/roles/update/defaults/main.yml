@@ -1,0 +1,47 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+
+# All variables intended for modification should be placed in this file.
+# All variables within this role should have a prefix of "cifmw_update"
+
+cifmw_update_openstack_update_run_target_version: "0.0.2"
+cifmw_update_openstack_update_run_operators_updated: true
+cifmw_update_openstack_update_run_containers_namespace: "podified-antelope-centos9"
+cifmw_update_openstack_update_run_containers_target_tag: "current-podified"
+cifmw_update_openstack_update_run_timeout: "600s"
+
+cifmw_update_run_dryrun: false
+
+### Test related variables
+## Internals
+cifmw_update_artifacts_basedir: "{{ cifmw_artifacts_basedir | default(ansible_user_dir ~ '/ci-framework-data') }}/{{ cifmw_update_artifacts_basedir_suffix }}"
+cifmw_update_artifacts_basedir_suffix: "tests/update"
+cifmw_update_namespace: "openstack"
+cifmw_update_workload_launch_script: "{{ cifmw_update_artifacts_basedir }}/workload_launch.sh"
+cifmw_update_timestamper_cmd: >-
+  | awk '{ print strftime("%Y-%m-%d %H:%M:%S |"), $0; fflush(); }'
+cifmw_update_ping_start_script: "{{ cifmw_update_artifacts_basedir }}/l3_agent_start_ping.sh"
+cifmw_update_ping_stop_script: "{{ cifmw_update_artifacts_basedir }}/l3_agent_stop_ping.sh"
+
+## User facing
+
+cifmw_update_ping_test: false
+cifmw_update_create_volume: false
+cifmw_update_ping_loss_second: 0
+cifmw_update_ping_loss_percent: 0
+
+cifmw_update_control_plane_check: false

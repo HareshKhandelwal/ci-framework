@@ -1,0 +1,81 @@
+---
+
+- name: Delete existing resources
+  environment:
+    KUBECONFIG: "{{ cifmw_openshift_kubeconfig }}"
+    PATH: "{{ cifmw_path }}"
+  when: not cifmw_os_net_setup_dry_run | bool
+  block:
+    - name: Delete existing subnets
+      ansible.builtin.shell: |
+        set -euxo pipefail
+        if [ $(oc exec -n openstack openstackclient -- \
+        openstack subnet list --network {{ item.0.name }} -c Name -f value | \
+        grep -c {{ item.1.name }}) != 0 ];then
+          oc exec -n openstack openstackclient -- \
+          openstack subnet delete {{ item.1.name }}
+        fi
+      loop: >-
+        {{
+          cifmw_os_net_setup_config |
+          subelements('subnets', skip_missing=True)
+        }}
+    - name: Delete existing subnet pools
+      ansible.builtin.shell: |
+        set -euxo pipefail
+        if [ $(oc exec -n openstack openstackclient -- \
+        openstack subnet pool list -c Name -f value | \
+        grep -c {{ item.name }}) != 0 ];then
+          oc exec -n openstack openstackclient -- \
+          openstack subnet pool delete {{ item.name }}
+        fi
+      loop: "{{ cifmw_os_net_subnetpool_config }}"
+    - name: Delete existing networks
+      ansible.builtin.shell: |
+        set -euxo pipefail
+        if [ $(oc exec -n openstack openstackclient -- \
+        openstack network list -c Name -f value | \
+        grep -c {{ item.name }}) != 0 ];then
+          oc exec -n openstack openstackclient -- \
+          openstack network delete {{ item.name }}
+        fi
+      loop: "{{ cifmw_os_net_setup_config }}"
+
+- name: Create required resources
+  environment:
+    KUBECONFIG: "{{ cifmw_openshift_kubeconfig }}"
+    PATH: "{{ cifmw_path }}"
+  block:
+    - name: Create network resources
+      vars:
+        _template_file: network_command.j2
+      block:
+        - name: Print network creation commands
+          ansible.builtin.debug:
+            msg: "{{ lookup('ansible.builtin.template', _template_file) }}"
+        - name: Create networks
+          ansible.builtin.shell: >
+            {{ lookup('ansible.builtin.template', _template_file) }}
+          when: not cifmw_os_net_setup_dry_run | bool
+    - name: Create subnet resources
+      vars:
+        _template_file: 'subnet_command.j2'
+      block:
+        - name: Print subnet command creation
+          ansible.builtin.debug:
+            msg: "{{ lookup('ansible.builtin.template', _template_file) }}"
+        - name: Create subnets
+          ansible.builtin.shell: >
+            {{ lookup('ansible.builtin.template', _template_file) }}
+          when: not cifmw_os_net_setup_dry_run | bool
+    - name: Create required subnet pools
+      vars:
+        _template_file: 'subnet_pool_command.j2'
+      block:
+        - name: Print subnet pools command creation
+          ansible.builtin.debug:
+            msg: "{{ lookup('ansible.builtin.template', _template_file) }}"
+        - name: Create subnet pools
+          ansible.builtin.shell: >
+            {{ lookup('ansible.builtin.template', _template_file) }}
+          when: not cifmw_os_net_setup_dry_run | bool

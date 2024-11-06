@@ -1,0 +1,366 @@
+{
+  "networks": {
+    "ctlplane": {
+      "network_name": "ctlplane",
+      "search_domain": "ctlplane.example.com",
+      "tools": {
+        "metallb": {
+          "ipv4_ranges": [
+            {
+              "start": "192.168.122.60",
+              "start_host": 60,
+              "end": "192.168.122.69",
+              "end_host": 69,
+              "length": 10
+            }
+          ],
+          "ipv6_ranges": []
+        },
+        "multus": {
+          "ipv4_ranges": [
+            {
+              "start": "192.168.122.30",
+              "start_host": 30,
+              "end": "192.168.122.39",
+              "end_host": 39,
+              "length": 10
+            }
+          ],
+          "ipv6_ranges": [],
+          "ipv4_routes": [],
+          "ipv6_routes": []
+        },
+        "netconfig": {
+          "ipv4_ranges": [
+            {
+              "start": "192.168.122.40",
+              "start_host": 40,
+              "end": "192.168.122.49",
+              "end_host": 49,
+              "length": 10
+            },
+            {
+              "start": "192.168.122.100",
+              "start_host": 100,
+              "end": "192.168.122.109",
+              "end_host": 109,
+              "length": 10
+            }
+          ],
+          "ipv6_ranges": []
+        }
+      },
+      "dns_v4": [],
+      "dns_v6": [],
+      "network_v4": "192.168.122.0/24",
+      "mtu": 1500
+    },
+    "internal-api": {
+      "network_name": "internal-api",
+      "search_domain": "internal-api.example.com",
+      "tools": {
+        "metallb": {
+          "ipv4_ranges": [
+            {
+              "start": "172.17.0.60",
+              "start_host": 60,
+              "end": "172.17.0.69",
+              "end_host": 69,
+              "length": 10
+            }
+          ],
+          "ipv6_ranges": []
+        },
+        "multus": {
+          "ipv4_ranges": [
+            {
+              "start": "172.17.0.30",
+              "start_host": 30,
+              "end": "172.17.0.39",
+              "end_host": 39,
+              "length": 10
+            }
+          ],
+          "ipv6_ranges": [],
+          "ipv4_routes": [
+            {
+              "destination": "192.168.121.0/24",
+              "gateway": "192.168.122.1"
+            }
+          ],
+          "ipv6_routes": []
+        },
+        "netconfig": {
+          "ipv4_ranges": [
+            {
+              "start": "172.17.0.40",
+              "start_host": 40,
+              "end": "172.17.0.49",
+              "end_host": 49,
+              "length": 10
+            },
+            {
+              "start": "172.17.0.100",
+              "start_host": 100,
+              "end": "172.17.0.109",
+              "end_host": 109,
+              "length": 10
+            }
+          ],
+          "ipv6_ranges": []
+        }
+      },
+      "dns_v4": [],
+      "dns_v6": [],
+      "network_v4": "172.17.0.0/24",
+      "vlan_id": 20,
+      "mtu": 1496
+    },
+    "storage": {
+      "network_name": "storage",
+      "search_domain": "storage.example.com",
+      "tools": {
+        "metallb": {
+          "ipv4_ranges": [
+            {
+              "start": "172.18.0.60",
+              "start_host": 60,
+              "end": "172.18.0.69",
+              "end_host": 69,
+              "length": 10
+            }
+          ],
+          "ipv6_ranges": []
+        },
+        "multus": {
+          "ipv4_ranges": [
+            {
+              "start": "172.18.0.30",
+              "start_host": 30,
+              "end": "172.18.0.39",
+              "end_host": 39,
+              "length": 10
+            }
+          ],
+          "ipv6_ranges": [],
+          "ipv4_routes": [],
+          "ipv6_routes": []
+        },
+        "netconfig": {
+          "ipv4_ranges": [
+            {
+              "start": "172.18.0.40",
+              "start_host": 40,
+              "end": "172.18.0.49",
+              "end_host": 49,
+              "length": 10
+            },
+            {
+              "start": "172.18.0.100",
+              "start_host": 100,
+              "end": "172.18.0.109",
+              "end_host": 109,
+              "length": 10
+            }
+          ],
+          "ipv6_ranges": []
+        }
+      },
+      "dns_v4": [],
+      "dns_v6": [],
+      "network_v4": "172.18.0.0/24",
+      "vlan_id": 21,
+      "mtu": 1496
+    },
+    "tenant": {
+      "network_name": "tenant",
+      "search_domain": "tenant.example.com",
+      "tools": {
+        "metallb": {
+          "ipv4_ranges": [
+            {
+              "start": "172.19.0.60",
+              "start_host": 60,
+              "end": "172.19.0.69",
+              "end_host": 69,
+              "length": 10
+            }
+          ],
+          "ipv6_ranges": []
+        },
+        "multus": {
+          "ipv4_ranges": [
+            {
+              "start": "172.19.0.30",
+              "start_host": 30,
+              "end": "172.19.0.39",
+              "end_host": 39,
+              "length": 10
+            }
+          ],
+          "ipv6_ranges": [],
+          "ipv4_routes": [],
+          "ipv6_routes": []
+        },
+        "netconfig": {
+          "ipv4_ranges": [
+            {
+              "start": "172.19.0.40",
+              "start_host": 40,
+              "end": "172.19.0.49",
+              "end_host": 49,
+              "length": 10
+            },
+            {
+              "start": "172.19.0.100",
+              "start_host": 100,
+              "end": "172.19.0.109",
+              "end_host": 109,
+              "length": 10
+            }
+          ],
+          "ipv6_ranges": []
+        }
+      },
+      "dns_v4": [],
+      "dns_v6": [],
+      "network_v4": "172.19.0.0/24",
+      "vlan_id": 22,
+      "mtu": 1496
+    }
+  },
+  "instances": {
+    "instance-1": {
+      "name": "instance-1",
+      "networks": {
+        "ctlplane": {
+          "network_name": "ctlplane",
+          "skip_nm": false,
+          "mac_addr": "52:54:00:32:28:d7",
+          "ip_v4": "192.168.122.10",
+          "netmask_v4": "255.255.255.0",
+          "prefix_length_v4": 24,
+          "mtu": 1500,
+          "is_trunk_parent": true
+        },
+        "internal-api": {
+          "network_name": "internal-api",
+          "skip_nm": false,
+          "mac_addr": "52:54:00:21:6a:19",
+          "ip_v4": "172.17.0.10",
+          "netmask_v4": "255.255.255.0",
+          "prefix_length_v4": 24,
+          "mtu": 1496,
+          "vlan_id": 20,
+          "is_trunk_parent": false,
+          "trunk_parent": "ctlplane"
+        },
+        "storage": {
+          "network_name": "storage",
+          "skip_nm": false,
+          "mac_addr": "52:54:00:42:0e:35",
+          "ip_v4": "172.18.0.10",
+          "netmask_v4": "255.255.255.0",
+          "prefix_length_v4": 24,
+          "mtu": 1496,
+          "vlan_id": 21,
+          "is_trunk_parent": false,
+          "trunk_parent": "tenant"
+        },
+        "tenant": {
+          "network_name": "tenant",
+          "skip_nm": false,
+          "mac_addr": "52:54:00:2f:ee:c8",
+          "ip_v4": "172.19.0.10",
+          "netmask_v4": "255.255.255.0",
+          "prefix_length_v4": 24,
+          "mtu": 1496,
+          "vlan_id": 22,
+          "is_trunk_parent": true
+        }
+      },
+      "hostname": "instance-1-hostname"
+    },
+    "instance-2": {
+      "name": "instance-2",
+      "networks": {
+        "ctlplane": {
+          "network_name": "ctlplane",
+          "skip_nm": false,
+          "mac_addr": "52:54:00:73:35:d3",
+          "ip_v4": "192.168.122.11",
+          "netmask_v4": "255.255.255.0",
+          "prefix_length_v4": 24,
+          "mtu": 1500,
+          "is_trunk_parent": true
+        },
+        "internal-api": {
+          "network_name": "internal-api",
+          "skip_nm": false,
+          "mac_addr": "52:54:00:0a:e2:ae",
+          "ip_v4": "172.17.0.11",
+          "netmask_v4": "255.255.255.0",
+          "prefix_length_v4": 24,
+          "mtu": 1496,
+          "vlan_id": 20,
+          "is_trunk_parent": false,
+          "trunk_parent": "ctlplane"
+        },
+        "storage": {
+          "network_name": "storage",
+          "skip_nm": false,
+          "mac_addr": "52:54:00:43:1b:1a",
+          "ip_v4": "172.18.0.11",
+          "netmask_v4": "255.255.255.0",
+          "prefix_length_v4": 24,
+          "mtu": 1496,
+          "vlan_id": 21,
+          "is_trunk_parent": false,
+          "trunk_parent": "tenant"
+        },
+        "tenant": {
+          "network_name": "tenant",
+          "skip_nm": false,
+          "mac_addr": "52:54:00:24:6d:84",
+          "ip_v4": "172.19.0.11",
+          "netmask_v4": "255.255.255.0",
+          "prefix_length_v4": 24,
+          "mtu": 1496,
+          "vlan_id": 22,
+          "is_trunk_parent": true
+        }
+      },
+      "hostname": "instance-2-hostname"
+    },
+    "instance-3": {
+      "name": "instance-3",
+      "networks": {
+        "storage": {
+          "network_name": "storage",
+          "skip_nm": true,
+          "mac_addr": "52:54:00:28:90:3e",
+          "ip_v4": "172.18.0.12",
+          "netmask_v4": "255.255.255.0",
+          "prefix_length_v4": 24,
+          "mtu": 1496,
+          "vlan_id": 21,
+          "is_trunk_parent": false,
+          "trunk_parent": "tenant"
+        },
+        "tenant": {
+          "network_name": "tenant",
+          "skip_nm": true,
+          "mac_addr": "52:54:00:36:d2:fe",
+          "ip_v4": "172.19.0.12",
+          "netmask_v4": "255.255.255.0",
+          "prefix_length_v4": 24,
+          "mtu": 1496,
+          "vlan_id": 22,
+          "is_trunk_parent": true
+        }
+      },
+      "hostname": "instance-3-hostname"
+    }
+  },
+  "routers": {}
+}

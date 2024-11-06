@@ -1,0 +1,72 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Create role needed directories
+  ansible.builtin.file:
+    path: "{{ cifmw_cert_manager_manifests_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Create the cifmw_cert_manager_operator_namespace namespace"
+  kubernetes.core.k8s:
+    kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+    api_key: "{{ cifmw_openshift_token | default(omit)}}"
+    context: "{{ cifmw_openshift_context | default(omit) }}"
+    name: "{{ cifmw_cert_manager_operator_namespace }}"
+    kind: Namespace
+    state: present
+
+- name: Install from Release Manifest
+  when: cifmw_cert_manager_install_from_release_manifest | bool
+  ansible.builtin.include_tasks: release_manifest.yml
+
+- name: Install from OLM Manifest
+  when: not cifmw_cert_manager_install_from_release_manifest | bool
+  ansible.builtin.include_tasks: olm_manifest.yml
+
+- name: Check for cert-manager namspeace existance
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+    api_key: "{{ cifmw_openshift_token | default(omit)}}"
+    context: "{{ cifmw_openshift_context | default(omit) }}"
+    name: cert-manager
+    kind: Namespace
+    field_selectors:
+      - status.phase=Active
+
+- name: Wait for cert-manager pods to be ready
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+    api_key: "{{ cifmw_openshift_token | default(omit)}}"
+    context: "{{ cifmw_openshift_context | default(omit) }}"
+    namespace: cert-manager
+    kind: Pod
+    wait: true
+    wait_sleep: 10
+    wait_timeout: 600
+    wait_condition:
+      type: Ready
+      status: "True"
+    label_selectors:
+      - "app = {{ item }}"
+  loop:
+    - cainjector
+    - webhook
+    - cert-manager
+
+- name: Validate cert-manager installation
+  when: cifmw_cert_manager_validate | bool
+  ansible.builtin.import_tasks: validate_certs.yml

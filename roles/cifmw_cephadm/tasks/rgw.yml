@@ -1,0 +1,100 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Collect the host and build the resulting host list
+  ansible.builtin.set_fact:
+    _hosts: "{{ _hosts|default([]) + [ item ] }}"
+  loop: "{{ groups[cifmw_ceph_target | default('computes')] | default([]) }}"
+
+- name: Create certificate and DNS for RGW if certificate paths are set
+  when:
+    - cifmw_cephadm_certificate | length > 0
+    - cifmw_cephadm_key | length > 0
+  block:
+    - name: Define cifmw_external_dns_vip_ext
+      ansible.builtin.set_fact:
+        cifmw_external_dns_vip_ext: "{{ cifmw_external_dns_vip_ext | default({}) |
+          combine({ (cifmw_cephadm_vip): 'rgw-external.ceph.local' }) }}"
+
+    - name: Define cifmw_external_dns_vip_int
+      ansible.builtin.set_fact:
+        cifmw_external_dns_vip_int: "{{ cifmw_external_dns_vip_ext | default({}) |
+          combine({ (cifmw_cephadm_vip): 'rgw-internal.ceph.local' }) }}"
+
+    - name: Create DNS domain and certificate
+      ansible.builtin.include_role:
+        name: cifmw_external_dns
+      vars:
+        cifmw_external_dns_domain: ceph.local
+        cifmw_external_dns_labels:
+          component: ceph-storage
+          service: ceph
+        cifmw_external_dns_certificate: "{{ cifmw_cephadm_certificate }}"
+        cifmw_external_dns_key: "{{ cifmw_cephadm_key }}"
+        cifmw_external_dns_certificate_dir: "{{ cifmw_cephadm_certs }}"
+
+    - name: Get the certificate content
+      register: slurp_cert
+      ansible.builtin.slurp:
+        src: "{{ cifmw_cephadm_certificate }}"
+
+    - name: Get the key content
+      register: slurp_key
+      ansible.builtin.slurp:
+        src: "{{ cifmw_cephadm_key }}"
+
+    - name: Set rgw_frontend_cert to cert/key concatenation
+      ansible.builtin.set_fact:
+        rgw_frontend_cert: "{{ slurp_cert['content'] | b64decode ~
+                               slurp_key['content'] | b64decode }}"
+
+- name: Create a Ceph RGW spec
+  ansible.builtin.template:
+    src: templates/ceph_rgw.yml.j2
+    dest: "{{ cifmw_ceph_rgw_spec_path }}"
+    mode: '0644'
+    force: true
+
+- name: Get ceph_cli
+  ansible.builtin.include_tasks: ceph_cli.yml
+  vars:
+    mount_spec: true
+    cifmw_cephadm_spec: "{{ cifmw_ceph_rgw_spec_path }}"
+
+- name: Generate cifmw_cephadm_assimilate_conf for ceph rgw
+  become: true
+  ansible.builtin.template:
+    src: "ceph_rgw.conf.j2"
+    dest: "{{ cifmw_cephadm_assimilate_conf }}"
+    owner: "{{ cifmw_cephadm_uid }}"
+    group: "{{ cifmw_cephadm_uid }}"
+    mode: "0644"
+
+- name: Apply ceph rgw keystone config
+  ansible.builtin.command: |
+    {{ cifmw_cephadm_ceph_cli }} config assimilate-conf -i {{ cifmw_cephadm_assimilate_conf_container }}
+  changed_when: false
+  become: true
+
+- name: Apply ceph config-key set ssl_option
+  ansible.builtin.command: |
+    {{ cifmw_cephadm_ceph_cli }} config-key set ssl_option {{ cifmw_cephadm_config_key_set_ssl_option }}
+  changed_when: false
+  become: true
+
+- name: Apply spec
+  ansible.builtin.command: "{{ cifmw_cephadm_ceph_cli }} orch apply --in-file {{ cifmw_cephadm_container_spec }}"
+  become: true

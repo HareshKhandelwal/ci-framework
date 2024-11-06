@@ -1,0 +1,174 @@
+---
+# It contains the list of jobs running against
+# whitebox-neutron-tempest-plugin rdo third party check job
+
+- job:
+    name: whitebox-neutron-tempest-plugin-podified-multinode-edpm-deployment-crc-2comp
+    parent: podified-multinode-edpm-deployment-crc-2comp
+    nodeset: centos-9-2x-centos-9-xxl-crc-extracted-2-39-0-xxl
+    timeout: 12600
+    override-checkout: main
+    description: |
+      A multinode EDPM Zuul job which one controller, one extracted crc and
+      2 computes. This job will run with meta content provider to test
+      whitebox-neutron-tempest-plugin opendev patches. It will validate the
+      deployment by running whitebox-neutron-tempest-plugin tests.
+    vars:
+      cifmw_run_test_role: test_operator
+      cifmw_os_must_gather_timeout: 28800
+      cifmw_test_operator_timeout: 14400
+      cifmw_block_device_size: 40G
+      cifmw_test_operator_concurrency: 6
+      cifmw_test_operator_tempest_network_attachments:
+        - ctlplane
+      cifmw_test_operator_tempest_container: openstack-tempest-all
+      cifmw_test_operator_tempest_registry: "{{ content_provider_os_registry_url | split('/') | first }}"
+      cifmw_test_operator_tempest_namespace: "{{ content_provider_os_registry_url | split('/') | last }}"
+      cifmw_test_operator_tempest_image_tag: "{{ content_provider_dlrn_md5_hash }}"
+      cifmw_test_operator_tempest_extra_images:
+          # TODO(chandan): Replace rocky qcow2 url once rhos-ops hosts it
+        - URL: "https://chandankumar.fedorapeople.org/rocky9_latest_neutron_whitebox.qcow2"
+          name: custom_neutron_guest
+          diskFormat: qcow2
+          ID: "11111111-1111-1111-1111-111111111111"
+          flavor:
+            name: custom_neutron_guest
+            ID: "22222222-2222-2222-2222-222222222222"
+            RAM: 1024
+            disk: 10
+            vcpus: 1
+      cifmw_edpm_prepare_kustomizations:
+        - apiVersion: kustomize.config.k8s.io/v1beta1
+          kind: Kustomization
+          namespace: openstack
+          patches:
+            - patch: |-
+                apiVersion: core.openstack.org/v1beta1
+                kind: OpenStackControlPlane
+                metadata:
+                  name: unused
+                spec:
+                  heat:
+                    enabled: true
+                  neutron:
+                    template:
+                      customServiceConfig: |
+                        [DEFAULT]
+                        debug=true
+                        vlan_transparent = true
+                        global_physnet_mtu = 1400
+                        [ovn]
+                        ovn_emit_need_to_frag = true
+                        [ml2]
+                        path_mtu = 1400
+                        [ovs]
+                        igmp_snooping_enable=True
+              target:
+                kind: OpenStackControlPlane
+      cifmw_tempest_tempestconf_config:
+        overrides: |
+          compute-feature-enabled.vnc_console true
+          compute-feature-enabled.cold_migration true
+          compute-feature-enabled.block_migration_for_live_migration true
+          network-feature-enabled.port_security true
+          neutron_plugin_options.advanced_image_ssh_user rocky
+          neutron_plugin_options.available_type_drivers geneve
+          neutron_plugin_options.create_shared_resources true
+          neutron_plugin_options.is_igmp_snooping_enabled true
+          neutron_plugin_options.ipv6_metadata false
+          neutron_plugin_options.advanced_image_ref 11111111-1111-1111-1111-111111111111
+          neutron_plugin_options.advanced_image_flavor_ref 22222222-2222-2222-2222-222222222222
+          whitebox_neutron_plugin_options.kubeconfig_path '/home/zuul/.crc/machines/crc/kubeconfig'
+          validation.allowed_network_downtime 15
+          validation.run_validation true
+          identity.v3_endpoint_type public
+          identity.v2_admin_endpoint_type public
+      # NOTE(gibi): This is a WA to force the publicURL as otherwise
+      # tempest gets configured with adminURL and that causes test
+      # instability.
+      cifmw_test_operator_tempest_workflow:
+        - stepName: multi-thread-testing
+          tempestRun:
+            concurrency: 6
+            includeList: |
+              # neutron whitebox multi-thread tests
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_basic.NetworkBasicTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_broadcast.BroadcastTestIPv4Common
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_broadcast.BroadcastTestVlanTransparency
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_extra_dhcp_opts.ExtraDhcpOptionsTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_extra_dhcp_opts.OvnExtraDhcpOptionsTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_internal_dns.InternalDNSTestOvn
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_multicast.MulticastTestIPv4Common.test_flooding_when_special_groups
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_multicast.MulticastTestIPv4Common.test_igmp_snooping_same_network_and_unsubscribe
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_multicast.MulticastTestIPv4Ovn
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_multicast.MulticastTestVlanTransparency
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_portsecurity.PortSecurityTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestCommon.test_bw_limit_east_west
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestCommon.test_bw_limit_tenant_network
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestCommon.test_default_qos_policy
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestCommon.test_dscp_marking_east_west
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestCommon.test_dscp_marking_tenant_network
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestCommon.test_qos_after_cold_migration
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestCommon.test_qos_after_live_migration
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestDscpInheritanceOvn
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestOvn
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestSriovBwLimitTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestSriovMinBwPlacementEnforcementTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_security_groups.NetworkDefaultSecGroupTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_vlan_transparency.MtuVlanTransparencyTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_vlan_transparency.MultiPortVlanTransparencyTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_vlan_transparency.MultiVlanTransparencyTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_vrrp.VrrpTest
+            excludeList: |
+              test_multicast.*ext*
+              test_multicast.*restart
+              ^neutron_.*plugin..*scenario.test_.*macvtap
+            # https://review.opendev.org/892839
+            # - neutron_tempest_plugin.scenario.test_mtu.NetworkWritableMtuTest
+            # It's in Blacklist before, FWaaS tests are not executed in any of our setups so there is no need to keep them whitelisted
+            #   ^neutron_tempest_plugin.fwaas.*
+        - stepName: single-thread-testing
+          tempestRun:
+            concurrency: 1
+            includeList: |
+              ^whitebox_neutron_tempest_plugin.*
+              ^neutron_.*plugin..*scenario.test_.*macvtap
+            # NOTE(mblue): If test skipped - please add related ticket to remove skip when issue resolved
+            excludeList: |
+              # TODO(ralonsoh): enable "test_ovn_fdb" tests once [1] is merged and released.
+              # [1]https://review.opendev.org/c/x/whitebox-neutron-tempest-plugin/+/929410
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_ovn_fdb.*
+              # remove when bug OSPRH-9569 resolved
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_metadata_rate_limiting
+              # remove when bug OSPRH-7998 resolved
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_security_group_logging.*test_only_dropped_traffic_logged
+              # remove when issue OSPCIX-457 resolved
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_security_group_logging.*test_.*accepted_traffic_logged
+              # neutron whitebox multi-thread tests (executed on different workflow step)
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_basic.NetworkBasicTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_broadcast.BroadcastTestIPv4Common
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_broadcast.BroadcastTestVlanTransparency
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_extra_dhcp_opts.ExtraDhcpOptionsTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_extra_dhcp_opts.OvnExtraDhcpOptionsTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_internal_dns.InternalDNSTestOvn
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_multicast.MulticastTestIPv4Common.test_flooding_when_special_groups
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_multicast.MulticastTestIPv4Common.test_igmp_snooping_same_network_and_unsubscribe
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_multicast.MulticastTestIPv4Ovn
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_multicast.MulticastTestVlanTransparency
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_portsecurity.PortSecurityTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestCommon.test_bw_limit_east_west
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestCommon.test_bw_limit_tenant_network
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestCommon.test_default_qos_policy
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestCommon.test_dscp_marking_east_west
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestCommon.test_dscp_marking_tenant_network
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestCommon.test_qos_after_cold_migration
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestCommon.test_qos_after_live_migration
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestDscpInheritanceOvn
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestOvn
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestSriovBwLimitTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_qos.QosTestSriovMinBwPlacementEnforcementTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_security_groups.NetworkDefaultSecGroupTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_vlan_transparency.MtuVlanTransparencyTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_vlan_transparency.MultiPortVlanTransparencyTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_vlan_transparency.MultiVlanTransparencyTest
+              ^whitebox_neutron_tempest_plugin.tests.scenario.test_vrrp.VrrpTest

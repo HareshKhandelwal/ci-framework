@@ -1,0 +1,70 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Cleaning up nat64_appliance image
+  ansible.builtin.file:
+    state: absent
+    path: "{{ cifmw_nat64_appliance_workdir }}/nat64-appliance.qcow2"
+
+- name: Get virtqemud socket
+  register: _virtqemud
+  ansible.builtin.stat:
+    path: "/var/run/libvirt/virtqemud-sock"
+
+- name: Perform the nat64_appliance cleanup in libvirt
+  when: _virtqemud.stat.exists
+  block:
+    - name: List VMs
+      register: _list_vms
+      community.libvirt.virt:
+        command: list_vms
+
+    - name: Stop the nat64_appliance VM
+      when: cifmw_nat64_appliance_name in _list_vms.list_vms
+      community.libvirt.virt:
+        command: destroy
+        name: "{{ cifmw_nat64_appliance_name }}"
+        uri: "{{ cifmw_nat64_libvirt_uri }}"
+
+    - name: Undefine the nat64_appliance VM
+      when: cifmw_nat64_appliance_name in _list_vms.list_vms
+      community.libvirt.virt:
+        command: undefine
+        name: "{{ cifmw_nat64_appliance_name }}"
+        force: true
+        uri: "{{ cifmw_nat64_libvirt_uri }}"
+
+    - name: Destroy the nat64 networks
+      register: net_destroy
+      community.libvirt.virt_net:
+        command: destroy
+        name: "{{ item }}"
+        uri: "{{ cifmw_nat64_libvirt_uri }}"
+      loop:
+        - "{{ cifmw_nat64_network_ipv4_name }}"
+        - "{{ cifmw_nat64_network_ipv6_name }}"
+      failed_when:
+        - net_destroy.rc is defined
+        - net_destroy.rc > 1
+
+    - name: Undefine the nat64 networks
+      community.libvirt.virt_net:
+        command: undefine
+        name: "{{ item }}"
+        uri: "{{ cifmw_nat64_libvirt_uri }}"
+      loop:
+        - "{{ cifmw_nat64_network_ipv4_name }}"
+        - "{{ cifmw_nat64_network_ipv6_name }}"

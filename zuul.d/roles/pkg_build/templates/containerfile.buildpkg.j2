@@ -1,0 +1,20 @@
+FROM {{ cifmw_pkg_build_ctx_baseimg }}
+
+RUN dnf upgrade --refresh -y && dnf install -y git python3-pip ansible-core sudo
+RUN groupadd mock
+RUN usermod -a -G mock root
+
+# Prepare for DLRN
+RUN dnf install -y createrepo gcc redhat-rpm-config rpmdevtools httpd \
+  libffi-devel openssl-devel yum-utils rsync rpm-build rpmdevtools sqlite \
+  python3-libselinux
+
+RUN ansible-galaxy collection install --force \
+  git+https://github.com/ansible-collections/ansible.posix \
+  git+https://github.com/ansible-collections/community.general
+
+COPY ./build_openstack_packages /root/roles/build_openstack_packages
+# Needed for "epel" tasks file
+COPY ./ci_setup /root/roles/ci_setup
+
+WORKDIR /root

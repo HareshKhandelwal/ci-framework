@@ -1,0 +1,178 @@
+---
+- name: Extract playbook to run
+  when:
+    - cifmw_job_uri is defined
+  vars:
+    playbooks: "{{ zuul_vars.zuul.playbook_context.playbooks }}"
+    extracted: >-
+      {{
+        (playbooks |
+         map(attribute='path') |
+         select('match', '.*openstack-k8s-operators/ci-framework.*') |
+         map('split', 'openstack-k8s-operators/ci-framework/'))
+      }}
+  ansible.builtin.set_fact:
+    zuul_plays: "{{ extracted | map('last') | list }}"
+
+- name: Run on controller-0
+  delegate_to: controller-0
+  block:
+    - name: CI reproducer dedicated tasks
+      when:
+        - cifmw_job_uri is defined
+      block:
+        - name: Ensure directory exists
+          ansible.builtin.file:
+            path: "/home/zuul/{{ job_id }}-params"
+            mode: "0755"
+            state: directory
+            owner: zuul
+            group: zuul
+
+        - name: Copy environment files to controller node
+          tags:
+            - bootstrap
+          ansible.builtin.copy:
+            src: "{{ _reproducer_basedir }}/parameters/"
+            dest: "/home/zuul/{{ job_id }}-params"
+            mode: "0644"
+
+        - name: Inject reproducer dedicated parameter file
+          tags:
+            - bootstrap
+          ansible.builtin.template:
+            src: "reproducer_params.yml.j2"
+            dest: "/home/zuul/{{ job_id }}-params/reproducer_params.yml"
+            mode: "0644"
+
+        - name: Generate CI job playbook
+          tags:
+            - bootstrap
+          ansible.builtin.template:
+            dest: "{{ _cifmw_reproducer_framework_location }}/{{ job_id }}_play.yml"
+            src: "play.yml.j2"
+            mode: "0644"
+
+        - name: Push content-provider playbook if needed
+          tags:
+            - bootstrap
+          when: >
+             (operator_content_provider| default(false) | bool) or
+             (openstack_content_provider| default(false) | bool)
+          ansible.builtin.template:
+            dest: "{{ _cifmw_reproducer_framework_location }}/{{ job_id }}_content-provider.yml"
+            src: "content-provider.yml.j2"
+            mode: "0644"
+
+        - name: Push extracted network data on controller-0
+          when:
+            - not is_molecule | default(false)
+          tags:
+            - bootstrap
+          ansible.builtin.copy:
+            dest: /home/zuul/zuul-network-data.yml
+            content: "{{ {'job_network': ci_job_networking} | to_nice_yaml}}"
+            mode: "0644"
+
+    - name: Push pre-CI job playbook
+      tags:
+        - bootstrap
+      ansible.builtin.copy:
+        dest: "{{ _cifmw_reproducer_framework_location }}/pre-ci-play.yml"
+        src: "pre-ci-play.yml"
+        mode: "0644"
+
+    - name: Push zuul-params.yml to expected location
+      tags:
+        - bootstrap
+      block:
+        - name: Push extracted content
+          vars:
+            zuul_params_filtered: >-
+              {{
+                zuul_vars.zuul | dict2items |
+                rejectattr('key', 'equalto', 'cifmw_operator_build_output') |
+                rejectattr('key', 'equalto', 'content_provider_registry_ip') |
+                items2dict
+              }}
+          ansible.builtin.copy:
+            dest: "/home/zuul/ci-framework-data/artifacts/parameters/zuul-params.yml"
+            content: "{{ {'zuul': zuul_params_filtered} | to_nice_yaml }}"
+            mode: "0644"
+
+    - name: Check for ansible logs file and rotate it
+      tags:
+        - always
+      ansible.builtin.include_tasks: rotate_log.yml
+      loop:
+        - "/home/zuul/ansible.log"
+        - "/home/zuul/ansible-pre-ci.log"
+        - "/home/zuul/ansible-{{ job_id }}.log"
+        - "/home/zuul/ansible-content-provider-bootstrap.log"
+
+    - name: Generate and run scripts
+      vars:
+        _home: "/home/zuul"
+        run_directory: "{{ _cifmw_reproducer_framework_location }}"
+      block:
+        - name: Generate pre-ci-play script
+          vars:
+            exports:
+              ANSIBLE_LOG_PATH: "~/ansible-pre-ci-{{ job_id }}.log"
+              ANSIBLE_HOST_KEY_CHECKING: "false"
+            playbook: "pre-ci-play.yml"
+            default_extravars: []
+            extravars: []
+          ansible.builtin.template:
+            dest: "{{ _home }}/01-pre-ci-play.sh"
+            mode: "0755"
+            src: "script.sh.j2"
+
+        - name: Generate content-provided script
+          vars:
+            exports:
+              ANSIBLE_LOG_PATH: "~/ansible-content-provider-{{ job_id }}.log"
+            playbook: "{{ job_id }}_content-provider.yml"
+            default_extravars: []
+            extravars: []
+          ansible.builtin.template:
+            dest: "{{ _home }}/02-content-provider.sh"
+            mode: "0755"
+            src: "script.sh.j2"
+
+        - name: Generate ci-job script
+          vars:
+            exports:
+              ANSIBLE_LOG_PATH: "~/ansible-ci-job-{{ job_id }}.log"
+            playbook: "{{ job_id }}_play.yml"
+            default_extravars: []
+            extravars: []
+          ansible.builtin.template:
+            dest: "{{ _home }}/03-run-job.sh"
+            mode: "0755"
+            src: "script.sh.j2"
+
+        - name: Run pre-ci-play
+          when:
+            - not is_molecule | default(false)
+          tags:
+            - bootstrap
+          no_log: "{{ cifmw_nolog | default(true) | bool }}"
+          ansible.builtin.command:
+            cmd: "{{ _home }}/01-pre-ci-play.sh"
+
+        - name: Run content-provider
+          when:
+            - (operator_content_provider | default(false) | bool) or
+              (openstack_content_provider | default(false) | bool)
+            - cifmw_reproducer_run_content_provider | bool
+          no_log: "{{ cifmw_nolog | default(true) | bool }}"
+          ansible.builtin.command:
+            cmd: "{{ _home }}/02-content-provider.sh"
+
+        - name: Run job
+          when:
+            - cifmw_reproducer_run_job | bool
+          no_log: "{{ cifmw_nolog | default(true) | bool }}"
+          ansible.builtin.command:
+            cmd: "{{ _home }}/03-run-job.sh"

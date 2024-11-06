@@ -1,0 +1,24 @@
+---
+- name: "Apply network {{ network.key }}"
+  become: true
+  when:
+    - network.value.config_nm | default(true) | bool
+  community.general.nmcli:
+    autoconnect: true
+    state: "{{ network.value.state | default('present') }}"
+    conn_name: "{{ network.value.connection | default(network.key) }}"
+    ifname: "{{ network.value.iface }}"
+    type: "{{ network.value.vlan is defined | ternary('vlan', 'ethernet') }}"
+    ip4: "{{ network.value.ip4 }}"
+    mac: "{{ network.value.mac | default(omit) }}"
+    dns4: "{{ network.value.dns4 | default(omit) }}"
+    # Needed for some specific infra
+    mtu: "{{ network.value.mtu | default(1500) }}"
+    gw4: "{{ network.value.gw4 | default(omit) }}"
+    # Needed only for IPv6 support
+    ip6: "{{ network.value.ip6 | default(omit) }}"
+    gw6: "{{ network.value.gw6 | default(omit) }}"
+    dns6: "{{ network.value.dns6 | default(omit) }}"
+    # Needed for VLAN interface
+    vlandev: "{{ network.value.parent_iface | default(omit)}}"
+    vlanid: "{{ network.value.vlan | default(omit) }}"

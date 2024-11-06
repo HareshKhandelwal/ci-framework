@@ -1,0 +1,19 @@
+---
+- name: RabbitMQ resource setup hook
+  hosts: "{{ cifmw_target_hook_host | default('localhost') }}"
+  gather_facts: false
+  tasks:
+    - name: Patch rabbitmq resources for lower resource consumption
+      environment:
+        KUBECONFIG: "{{ cifmw_openshift_kubeconfig }}"
+        PATH: "{{ cifmw_path }}"
+      ansible.builtin.shell: |
+        crname=$(oc get openstackcontrolplane -o name -n {{ namespace }})
+        oc patch ${crname} --type json -n {{ namespace }} \
+          -p='[{"op": "replace", "path": "/spec/rabbitmq/templates/rabbitmq/resources/requests/cpu", "value": 500m}]'
+        oc patch ${crname} --type json -n {{ namespace }} \
+          -p='[{"op": "replace", "path": "/spec/rabbitmq/templates/rabbitmq/resources/requests/memory", "value": 500Mi}]'
+        oc patch ${crname} --type json -n {{ namespace }} \
+          -p='[{"op": "replace", "path": "/spec/rabbitmq/templates/rabbitmq-cell1/resources/requests/cpu", "value": 500m}]'
+        oc patch ${crname} --type json -n {{ namespace }} \
+          -p='[{"op": "replace", "path": "/spec/rabbitmq/templates/rabbitmq-cell1/resources/requests/memory", "value": 500Mi}]'

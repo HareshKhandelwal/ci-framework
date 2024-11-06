@@ -1,0 +1,268 @@
+---
+- name: Sync repos for controller to compute for periodic jobs and gating repo
+  hosts: computes
+  gather_facts: true
+  tasks:
+    - name: Check for gating repo on controller
+      delegate_to: "{{ groups['all'] | select('match', 'controller') | first }}"
+      ansible.builtin.stat:
+        path: "{{ cifmw_basedir }}/artifacts/repositories/gating.repo"
+      register: _gating_repo
+
+    - name: Copy repositories from controller to computes
+      when:
+        - zuul is defined
+        - ("'periodic' in zuul.job") or (_gating_repo.stat.exists)
+      become: true
+      ansible.builtin.copy:
+        dest: "/etc/yum.repos.d/"
+        src: "{{ cifmw_basedir }}/artifacts/repositories/"
+
+- name: Build dataset hook
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: Load parameters
+      ansible.builtin.include_vars:
+        dir: "{{ item }}"
+      loop:
+        - "{{ cifmw_basedir }}/artifacts/parameters"
+        - "/etc/ci/env"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Ensure CRC hostname is set
+      ansible.builtin.set_fact:
+        _crc_hostname: "{{ cifmw_crc_hostname | default('crc') }}"
+
+    - name: Check we have some compute in inventory
+      ansible.builtin.set_fact:
+        computes_len: "{{ groups['computes'] | default([]) | length }}"
+
+    - name: Ensure that the isolated net was configured for crc
+      ansible.builtin.assert:
+        that:
+          - crc_ci_bootstrap_networks_out is defined
+          - crc_ci_bootstrap_networks_out[_crc_hostname] is defined
+          - crc_ci_bootstrap_networks_out[_crc_hostname]['default'] is defined
+
+    - name: Ensure we have needed bits for compute when needed
+      when:
+        - computes_len | int > 0
+      vars:
+        _first_compute: "{{ groups['computes'] | sort | first }}"
+      ansible.builtin.assert:
+        that:
+          - crc_ci_bootstrap_networks_out[_first_compute] is defined
+          - crc_ci_bootstrap_networks_out[_first_compute]['default'] is defined
+
+    - name: Set facts for further usage within the framework
+      ansible.builtin.set_fact:
+        cifmw_edpm_prepare_extra_vars:
+          NNCP_INTERFACE: "{{ crc_ci_bootstrap_networks_out[_crc_hostname].default.iface }}"
+          NNCP_DNS_SERVER: >-
+            {{
+              crc_ci_bootstrap_networks_out[_crc_hostname].default.ip4 |
+              default(crc_ci_bootstrap_networks_out[_crc_hostname].default.ip) |
+              replace('/24', '')
+            }}
+          NETWORK_MTU: "{{ crc_ci_bootstrap_networks_out[_crc_hostname].default.mtu }}"
+
+    - name: Ensure the kustomizations dirs exists
+      ansible.builtin.file:
+        path: "{{ cifmw_basedir }}/artifacts/manifests/kustomizations/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - dataplane
+        - controlplane
+
+    - name: Create OpenStackControlPlane CR Kustomization
+      ansible.builtin.copy:
+        dest: "{{ cifmw_basedir }}/artifacts/manifests/kustomizations/controlplane/99-kustomization.yaml"
+        content: |-
+          apiVersion: kustomize.config.k8s.io/v1beta1
+          kind: Kustomization
+          resources:
+          namespace: {{ namespace }}
+          patches:
+          - target:
+              kind: OpenStackControlPlane
+            patch: |-
+              - op: replace
+                path: /spec/dns/template/options
+                value: [
+                  {
+                    "key": "server",
+                    "values": [ "192.168.122.10" ]
+                  },
+                  {
+                    "key": "no-negcache",
+                    "values": []
+                  }
+                ]
+
+    - name: Prepare EDPM deploy related facts and keys
+      when:
+        - computes_len | int > 0
+      vars:
+        _first_compute: "{{ groups['computes'] | sort | first }}"
+      block:
+        - name: Set specific fact for compute accesses
+          vars:
+            dns_servers: "{{ ((['192.168.122.10'] + ansible_facts['dns']['nameservers']) | unique)[0:2] }}"
+            edpm_install_yamls_vars:
+              SSH_KEY_FILE: "{{ ansible_user_dir }}/.ssh/id_cifw"
+              DATAPLANE_COMPUTE_IP: >-
+                {{
+                  crc_ci_bootstrap_networks_out[_first_compute].default.ip4 |
+                  default(crc_ci_bootstrap_networks_out[_first_compute].default.ip) |
+                  ansible.utils.ipaddr('address')
+                }}
+              DATAPLANE_SSHD_ALLOWED_RANGES: "['0.0.0.0/0']"
+              DATAPLANE_TOTAL_NODES: "{{ computes_len | int }}"
+              DATAPLANE_SINGLE_NODE: "{{ (computes_len | int > 1) | ternary('false', 'true') }}"
+
+          ansible.builtin.set_fact:
+            cifmw_edpm_deploy_extra_vars: "{{ edpm_install_yamls_vars }}"
+
+        - name: Create EDPM CR Kustomization
+          vars:
+            dns_servers: "{{ ((['192.168.122.10'] + ansible_facts['dns']['nameservers']) | unique)[0:2] }}"
+          ansible.builtin.copy:
+            dest: "{{ cifmw_basedir }}/artifacts/manifests/kustomizations/dataplane/99-kustomization.yaml"
+            content: |-
+              apiVersion: kustomize.config.k8s.io/v1beta1
+              kind: Kustomization
+              resources:
+              namespace: {{ namespace }}
+              patches:
+              - target:
+                  kind: OpenStackDataPlaneNodeSet
+                patch: |-
+              {% for compute_node in groups['computes'] %}
+                  - op: replace
+                    path: /spec/nodes/edpm-{{ compute_node }}/hostName
+                    value: "{{compute_node}}"
+              {% endfor %}
+                  - op: replace
+                    path: /spec/nodeTemplate/ansible/ansibleVars/neutron_public_interface_name
+                    value: "{{ crc_ci_bootstrap_networks_out[_first_compute].default.iface | default('') }}"
+
+              {% for compute_node in groups['computes'] if compute_node != _first_compute %}
+                  - op: replace
+                    path: /spec/nodes/edpm-{{ compute_node }}/ansible/ansibleHost
+                    value: >-
+                      {{
+                        crc_ci_bootstrap_networks_out[compute_node].default.ip4 |
+                        default(crc_ci_bootstrap_networks_out[compute_node].default.ip) |
+                        ansible.utils.ipaddr('address')
+                      }}
+
+                  - op: replace
+                    path: /spec/nodes/edpm-{{ compute_node }}/networks/0/fixedIP
+                    value: >-
+                      {{
+                        crc_ci_bootstrap_networks_out[compute_node].default.ip4 |
+                        default(crc_ci_bootstrap_networks_out[compute_node].default.ip) |
+                        ansible.utils.ipaddr('address')
+                      }}
+              {% endfor %}
+
+                  - op: add
+                    path: /spec/nodeTemplate/ansible/ansibleVars/edpm_os_net_config_mappings
+                    value:
+                      net_config_data_lookup:
+                        edpm-compute:
+                          nic2: "{{ crc_ci_bootstrap_networks_out[_first_compute].default.iface | default('ens7') }}"
+
+                  - op: add
+                    path: /spec/nodeTemplate/ansible/ansibleVars/edpm_network_config_debug
+                    value: true
+
+                  - op: add
+                    path: /spec/env
+                    value: {}
+
+                  - op: add
+                    path: /spec/env
+                    value:
+                      - name: "ANSIBLE_VERBOSITY"
+                        value: "2"
+
+                  - op: replace
+                    path: /spec/nodeTemplate/ansible/ansibleVars/edpm_network_config_template
+                    value: |-
+                        {%- raw %}
+                        ---
+                        {% set mtu_list = [ctlplane_mtu] %}
+                        {% for network in nodeset_networks %}
+                        {{ mtu_list.append(lookup('vars', networks_lower[network] ~ '_mtu')) }}
+                        {%- endfor %}
+                        {% set min_viable_mtu = mtu_list | max %}
+                        network_config:
+                        - type: interface
+                          name: nic1
+                          use_dhcp: true
+                          mtu: {{ min_viable_mtu }}
+                        - type: ovs_bridge
+                          name: {{ neutron_physical_bridge_name }}
+                          mtu: {{ min_viable_mtu }}
+                          use_dhcp: false
+                          dns_servers: {{ ctlplane_dns_nameservers }}
+                          domain: {{ dns_search_domains }}
+                          addresses:
+                          - ip_netmask: {{ ctlplane_ip }}/{{ ctlplane_cidr }}
+                          routes: {{ ctlplane_host_routes }}
+                          members:
+                          - type: interface
+                            name: nic2
+                            mtu: {{ min_viable_mtu }}
+                            # force the MAC address of the bridge to this interface
+                            primary: true
+                        {% for network in nodeset_networks %}
+                          - type: vlan
+                            mtu: {{ lookup('vars', networks_lower[network] ~ '_mtu') }}
+                            vlan_id: {{ lookup('vars', networks_lower[network] ~ '_vlan_id') }}
+                            addresses:
+                            - ip_netmask:
+                                {{ lookup('vars', networks_lower[network] ~ '_ip') }}/{{ lookup('vars', networks_lower[network] ~ '_cidr') }}
+                            routes: {{ lookup('vars', networks_lower[network] ~ '_host_routes') }}
+                        {% endfor %}
+                        {% endraw %}
+
+                  - op: replace
+                    path: /spec/nodeTemplate/ansible/ansibleUser
+                    value: "{{ hostvars[_first_compute].ansible_user | default('zuul') }}"
+
+                  - op: replace
+                    path: /spec/nodeTemplate/ansible/ansibleVars/ctlplane_dns_nameservers
+                    value:
+              {% for dns_server in dns_servers %}
+                      - "{{ dns_server }}"
+              {% endfor %}
+
+              {% if content_provider_registry_ip is defined %}
+                  - op: add
+                    path: /spec/nodeTemplate/ansible/ansibleVars/edpm_container_registry_insecure_registries
+                    value: ["{{ content_provider_registry_ip }}:5001"]
+              {% endif %}
+
+                  - op: add
+                    path: /spec/nodeTemplate/ansible/ansibleVars/edpm_sshd_allowed_ranges
+                    value: ["0.0.0.0/0"]
+
+        - name: Ensure we know about the private host keys
+          ansible.builtin.shell:
+            cmd: |
+              ssh-keyscan {{ cifmw_edpm_deploy_extra_vars.DATAPLANE_COMPUTE_IP }} >> ~/.ssh/known_hosts
+
+    - name: Save compute info
+      vars:
+        file_content:
+          cifmw_edpm_deploy_extra_vars: "{{ cifmw_edpm_deploy_extra_vars | default({}) }}"
+          cifmw_edpm_prepare_extra_vars: "{{ cifmw_edpm_prepare_extra_vars }}"
+      ansible.builtin.copy:
+        dest: "{{ cifmw_basedir }}/artifacts/{{ step }}_{{ hook_name }}.yml"
+        content: "{{ file_content | to_nice_yaml }}"

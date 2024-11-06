@@ -1,0 +1,83 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Converge
+  hosts: all
+  tasks:
+    - name: Copy generated content in ci-framework-data/artifacts
+      vars:
+        dest_dir: >-
+          {{
+            (ansible_user_dir,
+             'ci-framework-data',
+             'artifacts') | path_join
+          }}
+      ansible.posix.synchronize:
+        src: "{{ item }}"
+        dest: "{{ dest_dir }}"
+      loop:
+        - /etc/cifmw-dnsmasq.conf
+        - /etc/cifmw-dnsmasq.d/
+
+    - name: Remove a domain specific forwarder
+      vars:
+        cifmw_dnsmasq_forwarder:
+          - state: absent
+            server: "192.168.100.100"
+            domains:
+              - battlestar.galactica.lan
+      ansible.builtin.include_role:
+        name: dnsmasq
+        tasks_from: manage_forwarder.yml
+
+    - name: Remove some host records
+      vars:
+        cifmw_dnsmasq_host_record:
+          - state: absent
+            ips:
+              - "192.168.253.50"
+              - "2345:0425:2CA1::dead"
+            names:
+              - dead.battlestar.galactica.lan
+          - state: absent
+            ips:
+              - "192.168.253.51"
+              - "2345:0425:2CA1::beef"
+            names:
+              - beef.battlestar.galactica.lan
+      ansible.builtin.include_role:
+        name: dnsmasq
+        tasks_from: manage_host_record.yml
+
+    - name: Remove some wildcard addresses
+      vars:
+        cifmw_dnsmasq_address:
+          - state: absent
+            ipaddr: "1.2.3.4"
+            domains:
+              - apps.ocp.starwars.lan
+          - state: absent
+            ipaddr: "4.3.2.1"
+            domains:
+              - apps.ocp.startrek.lan
+      ansible.builtin.include_role:
+        name: dnsmasq
+        tasks_from: manage_address.yml
+
+    - name: Cleanup dnsmasq
+      ansible.builtin.import_role:
+        name: "dnsmasq"
+        tasks_from: "cleanup.yml"

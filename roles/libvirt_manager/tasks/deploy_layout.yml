@@ -1,0 +1,353 @@
+---
+- name: Import layout generator if needed
+  when:
+    - _cifmw_libvirt_manager_layout is not defined
+  ansible.builtin.include_tasks: generate_layout.yml
+
+# TODO(hjensas): We should have a dedicated role for firewall
+- name: Enable forwarding in the libvirt zone
+  when: cifmw_libvirt_manager_firewalld_zone_libvirt_forward | default(true) | bool
+  become: true
+  notify: Restart firewalld
+  ansible.builtin.command:
+    cmd: >-
+       firewall-cmd --permanent --zone libvirt --add-forward
+
+- name: Enable masquerading for public traffic
+  when: cifmw_libvirt_manager_firewalld_default_zone_masquerade | default(true) | bool
+  become: true
+  ansible.posix.firewalld:
+    masquerade: true
+    zone: "{{ cifmw_libvirt_manager_firewalld_default_zone }}"
+    permanent: true
+    immediate: true
+    state: enabled
+
+- name: Ensure firewalld is restarts
+  ansible.builtin.meta: flush_handlers
+
+# todo(Lewis): We need to deploy VirtualBMC on the controller rather than hypervisor
+# Deploy VBMC only on the hypervisor running OpenShift services,
+# being OCP cluster or single CRC.
+- name: Deploy VirtualBMC service container
+  tags:
+    - bootstrap
+    - bootstrap_layout
+  when:
+    - cifmw_use_vbmc | default(false) | bool
+    - (_cifmw_libvirt_manager_layout.vms.crc.target is defined and
+       _cifmw_libvirt_manager_layout.vms.crc.target == inventory_hostname) or
+      (_cifmw_libvirt_manager_layout.vms.crc is defined and
+       _cifmw_libvirt_manager_layout.vms.crc.target is undefined) or
+      (_cifmw_libvirt_manager_layout.vms.ocp.target is defined and
+       _cifmw_libvirt_manager_layout.vms.ocp.target == inventory_hostname) or
+      (_cifmw_libvirt_manager_layout.vms.ocp is defined and
+       _cifmw_libvirt_manager_layout.vms.ocp.target is undefined) or
+      (_cifmw_libvirt_manager_layout.vms.crc is undefined and _cifmw_libvirt_manager_layout.vms.ocp is undefined)
+  block:
+    - name: Deploy virtualbmc
+      ansible.builtin.include_role:
+        name: virtualbmc
+
+    - name: Let the project know we have vbmc available
+      ansible.builtin.set_fact:
+        _vbmc_available: true
+        _vbmc_host: "{{ inventory_hostname }}"
+
+- name: Create needed workload directory
+  ansible.builtin.file:
+    path: "{{ cifmw_libvirt_manager_basedir }}/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - workload
+    - reproducer-inventory
+    - volumes
+
+- name: Allow QEMU on workload directory
+  become: true
+  ansible.posix.acl:
+    path: "{{ cifmw_libvirt_manager_basedir }}/{{ item }}"
+    entity: "qemu"
+    etype: "user"
+    permissions: rwx
+    state: present
+  loop:
+    - workload
+    - volumes
+
+- name: Generate networking data
+  when:
+    - cifmw_libvirt_manager_mac_map is undefined
+  ansible.builtin.include_tasks: generate_networking_data.yml
+
+- name: Create group inventories
+  when:
+    - _cifmw_libvirt_manager_layout.vms[item].manage | default(true)
+    - _cifmw_libvirt_manager_layout.vms[item].amount | default(1) | int > 0
+  vars:
+    hosts: >-
+      {{
+        cifmw_libvirt_manager_all_vms |
+        dict2items |
+        selectattr('value', 'equalto', item)
+      }}
+  ansible.builtin.template:
+    dest: "{{ cifmw_libvirt_manager_basedir }}/reproducer-inventory/{{ item }}-group.yml"
+    src: inventory.yml.j2
+  loop: "{{ _cifmw_libvirt_manager_layout.vms.keys() }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Create "all" group inventory file
+  ansible.builtin.template:
+    dest: "{{ cifmw_libvirt_manager_basedir }}/reproducer-inventory/all-group.yml"
+    src: "all-inventory.yml.j2"
+
+- name: Ensure storage pool is present.
+  when:
+    - (require_extra_disks | int) > 0
+  vars:
+    action: "create"
+    _extra_disks: >-
+      {{
+        _cifmw_libvirt_manager_layout.vms |
+        dict2items |
+        selectattr('value.extra_disks_num', 'defined') |
+        items2dict
+      }}
+    require_extra_disks: "{{ _extra_disks | length }}"
+  ansible.builtin.include_tasks: storage_pool.yml
+
+- name: Ensure images are present
+  when:
+    - item.key is not match('.*(ocp|crc).*')
+  vars:
+    image_data: "{{ item.value }}"
+  ansible.builtin.include_tasks:
+    file: get_image.yml
+  loop: "{{ _cifmw_libvirt_manager_layout.vms | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Manage SSH key
+  vars:
+    _sshkey: "{{ ansible_user_dir }}/.ssh/cifmw_reproducer_key"
+  block:
+    - name: Get ssh key state
+      register: _keystat
+      ansible.builtin.stat:
+        path: "{{ _sshkey }}"
+
+    - name: Create temporary ssh keypair
+      when:
+        - not _keystat.stat.exists
+      community.crypto.openssh_keypair:
+        path: "{{ _sshkey }}"
+        type: "{{ cifmw_libvirt_manager_reproducer_key_type }}"
+        size: "{{ cifmw_libvirt_manager_reproducer_key_size }}"
+        comment: cifmw_reproducer_key
+
+    - name: Slurp public key for later use
+      register: pub_ssh_key
+      ansible.builtin.slurp:
+        path: "{{ _sshkey }}.pub"
+
+    - name: Slurp private key for later use
+      register: priv_ssh_key
+      ansible.builtin.slurp:
+        path: "{{ _sshkey }}"
+
+- name: Inject cifmw_reproducer_key.pub in hypervisor authorized_keys
+  ansible.posix.authorized_key:
+    user: "{{ ansible_user_id }}"
+    key: "{{ pub_ssh_key['content'] | b64decode }}"
+
+- name: Create fact holding network data for VMs
+  ansible.builtin.set_fact:
+    cacheable: false
+    cifmw_reproducer_network_data: {}
+
+- name: List existing networks
+  register: _virt_nets
+  community.libvirt.virt_net:
+    command: "list_nets"
+
+- name: Gather pool fact
+  when:
+    - ansible_libvirt_pools is undefined
+  community.libvirt.virt_pool:
+    command: facts
+
+- name: Create and run VMs
+  when:
+    - (
+        vm_data.value.target is defined and
+        vm_data.value.target == inventory_hostname
+      ) or
+      vm_data.value.target is undefined
+    - (vm_data.value.amount is defined and
+       (vm_data.value.amount | int) > 0) or
+      vm_data.value.amount is undefined
+  vars:
+    vm_type: "{{ _vm.value }}"
+    vm: "{{ _vm.key }}"
+    vm_data: >-
+      {{
+        _cifmw_libvirt_manager_layout.vms[vm_type]
+      }}
+    pub_key: "{{ pub_ssh_key.content | b64decode }}"
+    priv_key: "{{ priv_ssh_key.content | b64decode }}"
+  ansible.builtin.include_tasks:
+    file: create_vms.yml
+  loop: "{{ cifmw_libvirt_manager_all_vms | dict2items }}"
+  loop_control:
+    loop_var: _vm
+    index_var: vm_idx
+
+- name: "Start (power-on) VMs"
+  ansible.builtin.include_tasks: start_vms.yml
+
+- name: "Configure managed VMs"
+  when:
+    - vm_data.manage | default(true) | bool
+    - vm_data.disk_file_name != 'blank'
+  vars:
+    vm_type: "{{ _vm.value }}"
+    vm: "{{ _vm.key }}"
+    vm_data: >-
+      {{
+        _cifmw_libvirt_manager_layout.vms[vm_type]
+      }}
+    _init_admin_user: "{{ vm_data.value.admin_user | default('root') }}"
+    pub_key: "{{ pub_ssh_key.content | b64decode }}"
+    priv_key: "{{ priv_ssh_key.content | b64decode }}"
+    vm_con_name: "{{ vm | replace('ocp-', '') }}.{{ inventory_hostname }}"
+  ansible.builtin.include_tasks: manage_vms.yml
+  loop: "{{ cifmw_libvirt_manager_all_vms | dict2items }}"
+  loop_control:
+    loop_var: _vm
+
+- name: Create VBMC entity
+  when:
+    - _vbmc_available is defined
+    - _vbmc_available | bool
+  vars:
+    cifmw_virtualbmc_machine: "cifmw-{{ item.key }}"
+    cifmw_virtualbmc_ipmi_port: >-
+      {{
+        cifmw_virtualbmc_ipmi_base_port + index
+      }}
+    cifmw_virtualbmc_action: "add"
+    _ipmi_host: >-
+      {%- if _cifmw_libvirt_manager_layout.vms.crc.target is defined -%}
+      {{_cifmw_libvirt_manager_layout_layout.vms.crc.target }}
+      {%- elif _cifmw_libvirt_manager_layout.vms.ocp.target is defined -%}
+      {{ _cifmw_libvirt_manager_layout.vms.ocp.target }}
+      {%- else -%}
+      {{ inventory_hostname }}
+      {%- endif -%}
+    cifmw_virtualbmc_ipmi_address: "{{ _ipmi_host }}.utility"
+  ansible.builtin.include_role:
+    name: virtualbmc
+    tasks_from: manage_host
+  loop: "{{ _libvirt_manager_networking.instances | dict2items }}"
+  loop_control:
+    index_var: index
+    label: "{{ item.key }}"
+
+- name: List running virtual machines.
+  community.libvirt.virt:
+    command: list_vms
+    uri: "qemu:///system"
+  register: _vms
+
+- name: Dump UUIDs
+  when:
+    - cifmw_libvirt_manager_uuids is defined
+    - cifmw_libvirt_manager_uuids | length > 0
+  vars:
+    _content:
+      libvirt_uuid: "{{ cifmw_libvirt_manager_uuids }}"
+  ansible.builtin.copy:
+    dest: "{{ cifmw_libvirt_manager_basedir }}/artifacts/libvirt-uuids.yml"
+    content: "{{ _content | to_nice_yaml }}"
+    mode: "0644"
+
+- name: Refresh and dump vbmc hosts
+  when:
+    - cifmw_use_vbmc | default(false) | bool
+    - _vbmc_host is defined
+    - _vbmc_host == inventory_hostname
+  block:
+    - name: Ensure fresh vbmc listing
+      ansible.builtin.include_role:
+        name: virtualbmc
+        tasks_from: list_hosts.yml
+
+    - name: Update vbmc related fact
+      vars:
+        _auth:
+          username: "{{ cifmw_virtualbmc_ipmi_user | default('admin') }}"
+          password: "{{ cifmw_virtualbmc_ipmi_password | default('password') }}"
+        _map_auth: >-
+          {{
+            cifmw_virtualbmc_known_hosts |
+            map('combine', _auth)
+          }}
+        _map_uuid: >-
+          {% set ns = namespace(output=[]) -%}
+          {% for host in _map_auth -%}
+          {%   set _uuid = {'uuid': cifmw_libvirt_manager_uuids[host['Domain name']]} -%}
+          {%   set _host = host | combine(_uuid) -%}
+          {%   set _ = ns.output.append(_host) -%}
+          {% endfor -%}
+          {{ ns.output }}
+      ansible.builtin.set_fact:
+        cifmw_virtualbmc_known_hosts: "{{ _map_uuid }}"
+
+    - name: Dump vbmc known hosts
+      vars:
+        content:
+          cifmw_virtualbmc_known_hosts: "{{ cifmw_virtualbmc_known_hosts }}"
+      ansible.builtin.copy:
+        dest: >-
+          {{ cifmw_libvirt_manager_basedir }}/artifacts/virtual-nodes.yml
+        content: "{{ content | to_nice_yaml }}"
+
+- name: Ensure we get proper access to CRC
+  when:
+    - _cifmw_libvirt_manager_layout.vms.crc is defined
+    - (_cifmw_libvirt_manager_layout.vms.crc.amount is defined and
+       (_cifmw_libvirt_manager_layout.vms.crc.amount | int) > 0) or
+      _cifmw_libvirt_manager_layout.vms.crc.amount is undefined
+    - (
+        _cifmw_libvirt_manager_layout.vms.crc.target is defined and
+        _cifmw_libvirt_manager_layout.vms.crc.target == inventory_hostname
+      ) or
+      _cifmw_libvirt_manager_layout.vms.crc.target is undefined
+  vars:
+    crc_private_key: >-
+      {{
+        (_cifmw_libvirt_manager_layout.vms.crc.image_local_dir, "id_ecdsa") |
+        path_join
+      }}
+  block:
+    - name: Copy authorized_keys
+      ansible.builtin.shell:
+        cmd: >-
+          set -xe -o pipefail;
+          ssh -i {{ crc_private_key}} core@crc-0 "mkdir -p .ssh";
+          cat ~/.ssh/authorized_keys | ssh -i {{ crc_private_key }} core@crc-0 "cat >> .ssh/authorized_keys"
+
+    - name: Enable root access on CRC
+      ansible.builtin.shell:
+        cmd: |-
+          set -xe -o pipefail
+          cat << EOF | ssh -i {{ crc_private_key }} core@crc-0
+            sudo sed -i 's/PermitRootLogin no/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config.d/40-rhcos-defaults.conf;
+            sudo systemctl restart sshd;
+            sudo cp -r /home/core/.ssh/authorized_keys* /root/.ssh;
+            sudo chown -R root: /root/.ssh;
+            sudo chmod 0750 /root/.ssh;
+          EOF

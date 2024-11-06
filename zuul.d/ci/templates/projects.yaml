@@ -1,0 +1,32 @@
+# DO NOT EDIT /zuul.d/project.yaml. This file is generated using the following
+# command: ** make role_molecule **
+# If you need to add new jobs in the project, please edit
+# ** /ci/templates/project.yaml **
+---
+- project:
+    name: openstack-k8s-operators/ci-framework
+    templates:
+      - podified-multinode-edpm-ci-framework-pipeline
+      - data-plane-adoption-ci-framework-pipeline
+    github-experimental-trigger:
+      jobs:
+        - downstream-va-hci-trigger-job
+    github-check:
+      jobs:
+        - noop
+        - cifmw-pod-ansible-test
+        - cifmw-pod-k8s-snippets-source
+        - cifmw-pod-pre-commit
+        - cifmw-pod-zuul-files
+        - cifmw-content-provider-build-images
+        - cifmw-edpm-build-images
+        - cifmw-multinode-kuttl
+        - cifmw-tcib
+        - cifmw-architecture-validate-hci
+        - ci-framework-openstack-meta-content-provider
+        - build-push-container-cifmw-client
+
+    github-post:
+      jobs:
+        - build-push-container-cifmw-client-post
+# Start generated content

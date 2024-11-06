@@ -1,0 +1,60 @@
+---
+- name: "Run ci/playbooks/tcib/run.yml"
+  hosts: "{{ cifmw_zuul_target_host | default('all') }}"
+  gather_facts: true
+  tasks:
+    - name: Filter out host if needed
+      when:
+        - cifmw_zuul_target_host is defined
+        - cifmw_zuul_target_host != 'all'
+        - inventory_hostname != cifmw_zuul_target_host
+      ansible.builtin.meta: end_host
+
+    - name: Discover the host ip
+      ansible.builtin.set_fact:
+        node_ip: >-
+          {{ hostvars[groups.all[0]].ansible_host if hostvars[groups.all[0]].ansible_host
+          is match("[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+")
+          else hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}
+
+    - name: Run tcib playbook
+      ansible.builtin.command:
+        chdir: "{{ ansible_user_dir }}/src/github.com/openstack-k8s-operators/ci-framework"
+        cmd: >-
+          ansible-playbook ci/playbooks/tcib/tcib.yml
+          -i "{{ ansible_user_dir }}/ci-framework-data/artifacts/zuul_inventory.yml"
+          -e @scenarios/centos-9/base.yml
+          -e @scenarios/centos-9/tcib.yml
+          -e "cifmw_rp_registry_ip={{ node_ip }}"
+          -e "cifmw_rp_registry_port=5001"
+          {%- if cifmw_extras is defined %}
+          {%-   for extra_vars in cifmw_extras %}
+          -e "{{   extra_vars }}"
+          {%-   endfor %}
+          {%- endif %}
+          -e "@{{ ansible_user_dir }}/ci-framework-data/artifacts/parameters/zuul-params.yml"
+
+    - name: Include inner ansible vars file
+      ansible.builtin.slurp:
+        src: "{{ cifmw_artifacts_basedir }}/artifacts/ansible-vars.yml"
+      register: _inner_ansible
+
+    - name: Return Zuul related data
+      vars:
+        _inner_ansible_vars: "{{ _inner_ansible.content | b64decode | from_yaml }}"
+        _dlrn_md5: "{{ _inner_ansible_vars.cifmw_repo_setup_full_hash }}"
+      block:
+        - name: Return Zuul Data
+          ansible.builtin.debug:
+            msg: >-
+              Running Content provider registry on
+              {{ node_ip | default('nowhere') }} with dlrn md5 hash
+              {{ _dlrn_md5 | default('') }}
+
+        - name: Set up content registry IP address
+          zuul_return:
+            data:
+              zuul:
+                pause: true
+              content_provider_registry_ip: "{{ node_ip | default('nowhere') }}"
+              content_provider_dlrn_md5_hash: "{{ _dlrn_md5 | default('') }}"

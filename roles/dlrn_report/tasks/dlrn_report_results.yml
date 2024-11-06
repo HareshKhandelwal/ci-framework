@@ -1,0 +1,74 @@
+---
+- name: Set zuul-log-path fact
+  when: zuul is defined
+  ansible.builtin.include_role:
+    name: set-zuul-log-path-fact
+
+- name: Set the the value of cifmw_repo_setup_promotion when multiple dlrn tags are used
+  when:
+    - cifmw_dlrn_report_promote_source | length > 0
+  ansible.builtin.set_fact:
+    cifmw_repo_setup_promotion: "{{ cifmw_dlrn_report_promote_source }}"
+
+- name: Get hash related data from repo_setup role
+  ansible.builtin.include_role:
+    name: repo_setup
+
+- name: Perform kinit for DLRN kerberos authentication
+  ansible.builtin.command:
+    cmd: >-
+      kinit
+      {{ cifmw_dlrn_report_krb_user_realm }}
+      -k -t {{ cifmw_dlrn_report_keytab }}
+  when: cifmw_dlrn_report_kerberos_auth|bool
+
+- name: Set empty value for dlrnapi password
+  ansible.builtin.set_fact:
+    dlrnapi:
+      password: ""
+  when:
+    - dlrnapi is defined
+    - "'password' not in dlrnapi"
+
+- name: Report results to dlrn for the tested hash
+  ansible.builtin.shell:
+    cmd: >-
+      {% if zuul_success is defined and zuul_success |bool -%}
+      echo "REPORTING SUCCESS TO DLRN API";
+      {% else -%}
+      echo "REPORTING FAILURE TO DLRN API";
+      {% endif -%}
+      export SSL_CA_BUNDLE="/etc/pki/ca-trust/extracted/openssl/ca-bundle.trust.crt";
+      dlrnapi --url {{ cifmw_repo_setup_dlrn_api_url }}
+      {% if cifmw_dlrn_report_dlrnapi_host_principal is defined and cifmw_dlrn_report_kerberos_auth|bool -%}
+      --server-principal {{ cifmw_dlrn_report_dlrnapi_host_principal }} --auth-method kerberosAuth
+      {% endif -%}
+      report-result
+      {% if (cifmw_repo_setup_component_name is defined) and (cifmw_repo_setup_component_name | length > 0) %}
+      {% if (cifmw_repo_setup_extended_hash is defined) and (cifmw_repo_setup_extended_hash | length > 0) -%}
+      --extended-hash {{ cifmw_repo_setup_extended_hash }}
+      {% endif -%}
+      {% if (cifmw_repo_setup_commit_hash is defined) and (cifmw_repo_setup_commit_hash | length > 0) -%}
+      --commit-hash {{ cifmw_repo_setup_commit_hash }}
+      {% endif -%}
+      {% if (cifmw_repo_setup_distro_hash is defined) and (cifmw_repo_setup_distro_hash | length > 0) -%}
+      --distro-hash {{ cifmw_repo_setup_distro_hash }}
+      {% endif -%}
+      {% else %}
+      {% if (cifmw_repo_setup_dlrn_hash_tag is defined) and (cifmw_repo_setup_dlrn_hash_tag | length > 0) -%}
+      --agg-hash {{ cifmw_repo_setup_dlrn_hash_tag }}
+      {% elif (cifmw_repo_setup_full_hash is defined) and (cifmw_repo_setup_full_hash | length > 0) -%}
+      --agg-hash {{ cifmw_repo_setup_full_hash }}
+      {% endif -%}
+      {% endif %}
+      --job-id {{ zuul.job }}
+      --info-url "{{ cifmw_dlrn_report_zuul_log_path }}/{{ zuul_log_path }}"
+      --timestamp $(date +%s)
+      --success {{ zuul_success | bool }}
+  environment: |
+    {{ zuul | zuul_legacy_vars | combine({
+      'DLRNAPI_PASSWORD': dlrnapi.password,
+      'DLRNAPI_USERNAME': cifmw_dlrn_report_dlrnapi_user
+      }) }}
+  changed_when: true
+  when: cifmw_dlrn_report_result | bool

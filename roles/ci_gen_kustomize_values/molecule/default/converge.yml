@@ -1,0 +1,199 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+
+- name: Converge
+  hosts: all
+  vars:
+    cifmw_architecture_scenario: hci
+    cifmw_ci_gen_kustomize_values_basedir: >-
+      {{ ansible_user_dir }}/ci-framework-data
+    architecture_repo: >-
+      {{
+        (ansible_user_dir,
+         'src/github.com/openstack-k8s-operators/architecture') | path_join
+      }}
+    artifacts: "{{ cifmw_ci_gen_kustomize_values_basedir }}/artifacts"
+    to_kustomize:
+      - name: 'ctlplane'
+        path: 'examples/va/hci/control-plane/nncp'
+      - name: 'dataplane'
+        path: 'examples/va/hci/edpm-pre-ceph/nodeset'
+    ci_gen_kustomize_fetch_ocp_state: false
+  tasks:
+    - name: Ensure architecture repository is building
+      ansible.builtin.shell:
+        chdir: "{{ architecture_repo }}/{{ item.path }}"
+        cmd: >-
+          {{ ansible_user_dir }}/bin/kustomize build >
+          {{ artifacts }}/vanilla-{{ item.name }}.yaml
+      loop: "{{ to_kustomize }}"
+
+    - name: Create nova migration keypair
+      register: _nova_key
+      community.crypto.openssh_keypair:
+        comment: "nova migration"
+        path: >-
+          {{ (artifacts,
+             'nova_migration_key') | path_join
+          }}
+        type: "ecdsa"
+
+    - name: Generate needed facts out of local files
+      vars:
+        priv_key: "{{ lookup('file', '~/.ssh/id_cifw') }}"
+        pub_key: "{{ lookup('file', '~/.ssh/id_cifw.pub') }}"
+        authorized_keys: "{{ lookup('file', '~/.ssh/authorized_keys') }}"
+        single_net_env: >-
+          {{
+            lookup('file', 'networking-environment-definition.yml')
+          }}
+        multi_ocp_net_env: >-
+          {{
+            lookup('file', '3-ocp-net-def.yml')
+          }}
+        _nova_priv_key: "{{ lookup('file', _nova_key.filename) }}"
+      ansible.builtin.set_fact:
+        cifmw_networking_env_definition: "{{ single_net_env | from_yaml }}"
+        ocp_cluster_networking_env_definition: "{{ multi_ocp_net_env | from_yaml}}"
+        cifmw_ci_gen_kustomize_values_ssh_authorizedkeys: >-
+          {{ authorized_keys }}
+        cifmw_ci_gen_kustomize_values_ssh_private_key: >-
+          {{ priv_key }}
+        cifmw_ci_gen_kustomize_values_ssh_public_key: >-
+          {{ pub_key }}
+        cifmw_ci_gen_kustomize_values_migration_pub_key: >-
+          {{ _nova_key.public_key }}
+        cifmw_ci_gen_kustomize_values_migration_priv_key: >-
+          {{ _nova_priv_key }}
+        cifmw_ci_gen_kustomize_values_sshd_ranges: >-
+          {{
+            [(single_net_env | from_yaml)['networks']['ctlplane']['network_v4']]
+          }}
+
+    - name: Generate network-values
+      vars:
+        cifmw_ci_gen_kustomize_values_name: "network-values"
+        cifmw_ci_gen_kustomize_values_src_file: >-
+          {{
+            [architecture_repo,
+             "examples/va/hci/control-plane/nncp/values.yaml"] | path_join
+          }}
+      ansible.builtin.include_role:
+        name: ci_gen_kustomize_values
+
+    - name: Generate edpm-nodeset-values
+      vars:
+        cifmw_ci_gen_kustomize_values_name: "edpm-nodeset-values"
+        cifmw_ci_gen_kustomize_values_src_file: >-
+          {{
+            [architecture_repo,
+             "examples/va/hci/edpm-pre-ceph/nodeset/values.yaml"] | path_join
+          }}
+      ansible.builtin.include_role:
+        name: ci_gen_kustomize_values
+
+    - name: Get generated files status
+      register: stat_values
+      ansible.builtin.stat:
+        get_attributes: false
+        get_checksum: false
+        get_mime: false
+        path: >-
+          {{
+            (artifacts, 'ci_gen_kustomize_values',
+             item, 'values.yaml') |
+             path_join }}
+      loop:
+        - network-values
+        - edpm-nodeset-values
+
+    - name: Assert generated values.yaml exists
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+      loop: "{{ stat_values.results }}"
+      loop_control:
+        label: "{{ item.stat.path }}"
+
+    - name: Ensure we have correct MAC
+      vars:
+        _val_file: "{{ artifacts }}/ci_gen_kustomize_values/edpm-nodeset-values/values.yaml"
+        _edpm_val: "{{ lookup('file', _val_file) | from_yaml }}"
+      ansible.builtin.assert:
+        that:
+          - _edpm_val.data.nodeset.ansible.ansibleVars.edpm_network_config_os_net_config_mappings['edpm-compute-0'].nic2 == '52:54:00:17:05:43'
+        msg: >-
+          Got {{ _edpm_val.data.nodeset.ansible.ansibleVars.edpm_network_config_os_net_config_mappings['edpm-compute-0'].nic2 }}
+
+    - name: Ensure we don't have node_1 nor node_2
+      vars:
+        _val_file: "{{ artifacts }}/ci_gen_kustomize_values/network-values/values.yaml"
+        _network_val: "{{ lookup('file', _val_file) | from_yaml }}"
+      ansible.builtin.assert:
+        that:
+          - _network_val.data.node_1 is undefined
+          - _network_vak.data.node_2 is undefined
+        msg: >-
+          Got either node_1 and/or node_2 in the generated content,
+          should only get node_0
+
+    - name: Regenerate with 3-OCP cluster data
+      block:
+        - name: Update cifmw_networking_env_definition
+          ansible.builtin.set_fact:
+            cifmw_networking_env_definition: "{{ ocp_cluster_networking_env_definition }}"
+
+        - name: Regenerate network-values
+          vars:
+            cifmw_ci_gen_kustomize_values_name: "network-values"
+            cifmw_ci_gen_kustomize_values_src_file: >-
+              {{
+                [architecture_repo,
+                 "examples/va/hci/control-plane/nncp/values.yaml"] | path_join
+              }}
+          ansible.builtin.include_role:
+            name: ci_gen_kustomize_values
+
+        - name: Regenerate edpm-nodeset-values
+          vars:
+            cifmw_ci_gen_kustomize_values_name: "edpm-nodeset-values"
+            cifmw_ci_gen_kustomize_values_src_file: >-
+              {{
+                [architecture_repo,
+                 "examples/va/hci/edpm-pre-ceph/nodeset/values.yaml"] | path_join
+              }}
+          ansible.builtin.include_role:
+            name: ci_gen_kustomize_values
+
+    - name: Copy generated values to correct location
+      ansible.builtin.copy:
+        remote_src: true
+        src: "{{ artifacts }}/ci_gen_kustomize_values/{{ item.key }}/values.yaml"
+        dest: "{{ architecture_repo }}/{{ item.value }}"
+      loop:
+        - key: 'network-values'
+          value: 'examples/va/hci/control-plane/nncp/values.yaml'
+        - key: 'edpm-nodeset-values'
+          value: 'examples/va/hci/edpm-pre-ceph/nodeset/values.yaml'
+
+    - name: Ensure kustomize is able to build
+      ansible.builtin.shell:
+        chdir: "{{ architecture_repo }}/{{ item.path }}"
+        cmd: >-
+          {{ ansible_user_dir }}/bin/kustomize build >
+          {{ artifacts }}/{{ item.name }}.yaml
+      loop: "{{ to_kustomize }}"

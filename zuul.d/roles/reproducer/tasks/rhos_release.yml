@@ -1,0 +1,10 @@
+---
+- name: Get rhos-release
+  ansible.builtin.dnf:
+    name: "{{ cifmw_repo_setup_rhos_release_rpm }}"
+    state: present
+    disable_gpg_check: true
+
+- name: Install repos
+  ansible.builtin.command:
+    cmd: "rhos-release {{ cifmw_repo_setup_rhos_release_args | default('rhel') }}"

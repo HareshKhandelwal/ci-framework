@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+
+## Shell Opts ----------------------------------------------------------------
+set -o pipefail
+set -xeuo
+
+## Vars ----------------------------------------------------------------------
+export PROJECT_DIR="$(dirname $(dirname $(readlink -f ${BASH_SOURCE[0]})))"
+# NOTE(cloudnull): Disable ansible compat check, caters to the case where
+#                  system ansible may be installed.
+export ANSIBLE_SKIP_CONFLICT_CHECK=1
+
+PIP_INSTALL_ARGUMENTS="-U -r ${PROJECT_DIR}/test-requirements.txt"
+case ${USE_VENV-'yes'} in
+    y|yes|true)
+        GALAXY="${HOME}/test-python/bin/ansible-galaxy"
+        PIP="${HOME}/test-python/bin/pip3"
+        ;;
+    *)
+        PIP='pip3'
+        GALAXY='ansible-galaxy'
+        # Gate jobs don't have /root/.local/bin in PATH, so install globally
+        if [ "$(whoami)" != "root" ]; then
+            PIP_INSTALL_ARGUMENTS="--user ${PIP_INSTALL_ARGUMENTS}"
+        fi
+        ;;
+esac
+
+# Install requirements
+${PIP} install ${PIP_INSTALL_ARGUMENTS}
+
+# append git hash to cifmw collection version (if detected)
+GITVER=$(git -C "${PROJECT_DIR}" rev-parse --short HEAD 2>/dev/null || true)
+[[ "" == "${GITVER}" ]] || sed -ri "s/^(version: [0-9.]+).*/\1+${GITVER}/" "${PROJECT_DIR}/galaxy.yml"
+
+${GALAXY} collection install --upgrade --force --timeout=120 ${PROJECT_DIR}
+
+# remove git hash from version to keep git status clean (not doing checkout to not revert any other manual change)
+[[ "" == "${GITVER}" ]] || sed -ri "s/^(version: [0-9.]+)+${GITVER}/\1/" "${PROJECT_DIR}/galaxy.yml"

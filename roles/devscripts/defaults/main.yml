@@ -1,0 +1,72 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+
+# All variables intended for modification should be placed in this file.
+# All variables within this role should have a prefix of "cifmw_devscripts"
+
+cifmw_devscripts_data_dir: >-
+  {{
+    cifmw_basedir |
+    default(ansible_user_dir ~ '/ci-framework-data')
+  }}
+cifmw_devscripts_artifacts_dir: >-
+  {{
+    (
+      cifmw_devscripts_data_dir,
+      'artifacts'
+    ) | ansible.builtin.path_join
+  }}
+cifmw_devscripts_logs_dir: >-
+  {{
+    (
+      cifmw_devscripts_data_dir,
+      'logs',
+      'devscripts'
+    ) | ansible.builtin.path_join
+  }}
+cifmw_devscripts_output_dir: >-
+  {{
+    (
+      cifmw_devscripts_data_dir,
+      'devscripts',
+      'output'
+    ) | ansible.builtin.path_join
+  }}
+cifmw_devscripts_repo_dir: >-
+  {{
+    (
+      ansible_user_dir,
+      'src/github.com/openshift-metal3/dev-scripts'
+    ) | ansible.builtin.path_join
+  }}
+
+cifmw_devscripts_debug: false
+cifmw_devscripts_dry_run: false
+cifmw_devscripts_enable_ocp_nodes_host_routing: false
+cifmw_devscripts_enable_iscsi_on_ocp_nodes: false
+cifmw_devscripts_enable_multipath_on_ocp_nodes: false
+cifmw_devscripts_remove_libvirt_net_default: false
+cifmw_devscripts_use_static_ip_addr: false
+
+cifmw_devscripts_user: "{{ ansible_user_id }}"
+
+cifmw_devscripts_create_logical_volume: false
+cifmw_devscripts_cinder_volume_pvs:
+  - /dev/vda
+
+cifmw_devscripts_config_overrides: {}
+cifmw_devscripts_installer_timeout: 7200  # 2 hours

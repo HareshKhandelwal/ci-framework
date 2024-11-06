@@ -1,0 +1,34 @@
+---
+service_type: node-exporter
+service_id: node-exporter
+service_name: node-exporter
+---
+service_type: grafana
+service_id: grafana
+service_name: grafana
+placement:
+  hosts:
+  - {{ _hosts[0] }}
+  count: 1
+networks:
+- {{ cifmw_cephadm_rgw_network }}
+---
+service_type: prometheus
+service_id: prometheus
+service_name: prometheus
+placement:
+  hosts:
+  - {{ _hosts[0] }}
+  count: 1
+networks:
+- {{ cifmw_cephadm_rgw_network }}
+---
+service_type: alertmanager
+service_id: alertmanager
+service_name: alertmanager
+placement:
+  hosts:
+  - {{ _hosts[0] }}
+  count: 1
+networks:
+- {{ cifmw_cephadm_rgw_network }}

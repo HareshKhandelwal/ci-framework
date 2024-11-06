@@ -1,0 +1,350 @@
+---
+- hosts: crc
+  name: "Tweak CRC node"
+  gather_facts: false
+  tasks:
+
+    - name: Load network parameters
+      register: _cifmw_multinode_customizations_crc_net_env_slurp
+      ansible.builtin.slurp:
+        src: "/etc/ci/env/networking-info.yml"
+
+    - name: Check which dnsmasq config we must edit
+      register: _dnsmasq
+      ansible.builtin.stat:
+        path: '/srv/dnsmasq.conf'
+        get_attributes: false
+        get_checksum: false
+        get_mime: false
+
+    - name: Shared parameter across blocks
+      vars:
+        _decoded_net_env: >-
+          {{
+            _cifmw_multinode_customizations_crc_net_env_slurp['content'] |
+            b64decode | from_yaml
+          }}
+        _crc_default_net_ip: >-
+          {{
+            _decoded_net_env.crc_ci_bootstrap_networks_out.crc[cifmw_crc_default_network | default('default')].ip
+          }}
+      block:
+        - name: Manage name resolution and interfaces
+          become: true
+          vars:
+            _crc_default_iface: >-
+              {{
+                 _decoded_net_env.crc_ci_bootstrap_networks_out.crc[cifmw_crc_default_network | default('default')].iface
+              }}
+            _crc_default_gw: >-
+              {{
+                 _decoded_net_env.crc_ci_bootstrap_networks_out.crc[cifmw_crc_default_network | default('default')].gw
+              }}
+            _crc_private_connection_name: >-
+              {{
+                 _decoded_net_env.crc_ci_bootstrap_networks_out.crc[cifmw_crc_default_network | default('default')].connection
+              }}
+          block:
+            - name: Ensure crc knows about its second NIC
+              community.general.nmcli:
+                autoconnect: true
+                conn_name: "{{ _crc_private_connection_name }}"
+                dns4: 127.0.0.1
+                ifname: "{{ _crc_default_iface }}"
+                type: ethernet
+                ip4: "{{ _crc_default_net_ip }}"
+                gw4: "{{ _crc_default_gw }}"
+                state: present
+
+            - name: Ensure crc does not get "public" DNS
+              become: true
+              community.general.nmcli:
+                autoconnect: true
+                conn_name: "Wired connection 1"
+                dns4_ignore_auto: true
+                state: present
+
+            - name: Restart NetworkManager
+              ansible.builtin.service:
+                name: NetworkManager
+                state: reloaded
+
+        - name: Configure dnsmasq
+          vars:
+            _dnsmasq_config: >-
+              {{
+                _dnsmasq.stat.exists |
+                ternary(_dnsmasq.stat.path, '/etc/dnsmasq.d/crc-dnsmasq.conf')
+              }}
+            _crc_default_net_dns: >-
+              {{
+                 _decoded_net_env.crc_ci_bootstrap_provider_dns |
+                default([])
+              }}
+            _validate: >-
+              {{
+                _dnsmasq.stat.exists |
+                ternary(omit, "/usr/sbin/dnsmasq -C %s --test")
+              }}
+          block:
+            - name: Configure dns forwarders
+              become: true
+              ansible.builtin.blockinfile:
+                path: "{{ _dnsmasq_config }}"
+                block: |-
+                  {% for dns_server in _crc_default_net_dns %}
+                  server={{ dns_server }}
+                  {% endfor %}
+                validate: "{{ _validate }}"
+
+            - name: Configure local DNS for CRC pod
+              become: true
+              register: last_modification
+              ansible.builtin.replace:
+                path: "{{ _dnsmasq_config }}"
+                regexp: "192.168.130.11"
+                replace: >-
+                  {{ _crc_default_net_ip | ansible.utils.ipaddr('address') }}
+                validate: "{{ _validate }}"
+
+            # Note(Lewis): Only needed for CRC => 2.32.0-4.14.8
+            - name: Configure dnsmasq listen-address to listen on both br-ex and ci-private-network
+              when:
+                - not _dnsmasq.stat.exists
+              become: true
+              ansible.builtin.lineinfile:
+                path: "{{ _dnsmasq_config }}"
+                insertafter: '^listen-address='
+                line: "listen-address={{ _crc_default_net_ip | ansible.utils.ipaddr('address') }}"
+                validate: "{{ _validate }}"
+
+          rescue:
+            - name: Debug _dnsmasq_config
+              ansible.builtin.debug:
+                var: _dnsmasq_config
+
+            - name: Debug _crc_default_net_dns
+              ansible.builtin.debug:
+                var: _crc_default_net_dns
+
+            - name: Debug net_ip value
+              ansible.builtin.debug:
+                msg: >-
+                  {{ _crc_default_net_ip | ansible.utils.ipaddr('address') }}
+
+            - name: Fail for good
+              ansible.builtin.fail:
+                msg: "Failure detected, check debug output above"
+
+    - name: Restart dnsmasq service if used
+      block:
+        - name: Restart native dnsmasq service
+          when:
+            - not _dnsmasq.stat.exists
+          become: true
+          ansible.builtin.service:
+            name: dnsmasq
+            state: restarted
+
+      rescue:
+        - name: Get dnsmasq logs
+          become: true
+          register: _dnsmasq_log
+          ansible.builtin.command:
+            cmd: "journalctl -xe -u dnsmasq"
+
+        - name: Output dnsmasq logs
+          ansible.builtin.debug:
+            var: _dnsmasq_log
+
+        - name: Fail for good
+          ansible.builtin.fail:
+            msg: "Unable to restart dnsmasq, check logs above"
+
+    - name: Manage old dnsmasq container
+      when:
+        - _dnsmasq.stat.exists
+      block:
+        # Avoid 'state: restarted' due to issues with IP not
+        # available when crc-dnsmasq starts
+        - name: Stop dnsmasq
+          become: true
+          ansible.builtin.systemd:
+            state: stopped
+            name: crc-dnsmasq
+
+        - name: Make sure that crc-dnsmasq is not running
+          containers.podman.podman_container:
+            name: crc-dnsmasq
+            state: absent
+
+        - name: Start dnsmasq
+          become: true
+          ansible.builtin.systemd:
+            state: started
+            name: crc-dnsmasq
+          register: _dnsmasq_start_reg
+          retries: 15
+          delay: 20
+          until:
+            - _dnsmasq_start_reg.failed is false
+            - _dnsmasq_start_reg.status is defined
+            - _dnsmasq_start_reg.status.ActiveState == "active"
+
+    - name: Wait for CRC to be ready
+      register: wait_crc
+      ansible.builtin.command: >-
+        oc login {{ cifmw_openshift_api }}
+        -u {{ cifmw_openshift_user }}
+        -p "{{ cifmw_openshift_password }}"
+        {%- if cifmw_openshift_skip_tls_verify | default(false) |bool %}
+        --insecure-skip-tls-verify=true
+        {%- endif %}
+      retries: 60
+      delay: 10
+      until:
+        - wait_crc is defined
+        - wait_crc.rc is defined
+        - wait_crc.rc == 0
+
+    - name: Set insecure registry on crc node
+      ansible.builtin.include_tasks: tasks/set_crc_insecure_registry.yml
+      when: content_provider_registry_ip is defined
+
+- hosts: controller
+  name: "Tweak Controller"
+  gather_facts: true
+  tasks:
+    - name: Install other packages
+      become: true
+      ansible.builtin.package:
+        name:
+          - ansible-core
+          - make
+        state: present
+
+    - name: Ensure we know compute host keys
+      ansible.builtin.shell:
+        cmd: |
+          ssh-keyscan {{ hostvars[item].ansible_host }} >> ~/.ssh/known_hosts
+      loop: >-
+        {{
+          hostvars | dict2items |
+          selectattr("value.ansible_host", "defined") |
+          map(attribute="key")
+        }}
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Generate an ssh keypair
+      ansible.builtin.command:
+        cmd: ssh-keygen -t ecdsa -f ~/.ssh/id_cifw -P ''
+
+    - name: Get public key
+      register: pub_key_slurp
+      ansible.builtin.slurp:
+        path: "{{ ansible_user_dir }}/.ssh/id_cifw.pub"
+
+    - name: Register pub key as a fact
+      ansible.builtin.set_fact:
+        persistent_ssh_key: "{{ pub_key_slurp['content'] | b64decode }}"
+
+    - name: Load network parameters
+      register: _cifmw_multinode_customizations_crc_net_env_slurp
+      ansible.builtin.slurp:
+        src: "/etc/ci/env/networking-info.yml"
+
+    - name: Check if cloud-init is overriding NM settings
+      become: true
+      ansible.builtin.stat:
+        path: "/etc/NetworkManager/conf.d/99-cloud-init.conf"
+      register: _cloud_init_nm_override_stat
+
+    - name: Remove cloud-init DNS override if present and reload
+      become: true
+      when: _cloud_init_nm_override_stat.stat.exists
+      block:
+        - name: Remove cloud-init DNS override if present
+          community.general.ini_file:
+            path: "/etc/NetworkManager/conf.d/99-cloud-init.conf"
+            section: main
+            option: dns
+            state: absent
+
+        - name: Reload the NetworkManager to pick the changes
+          ansible.builtin.service:
+            name: NetworkManager
+            state: "reloaded"
+
+    - name: Get the default iface connection
+      register: controller_default_connection_out
+      ansible.builtin.command:
+        cmd: "nmcli -g general.connection device show eth0"
+
+    - name: Prepend CRC DNS server in the controllers default Network Manager connection configuation
+      vars:
+        _decoded_net_env: >-
+          {{
+            _cifmw_multinode_customizations_crc_net_env_slurp['content'] |
+            b64decode | from_yaml
+          }}
+        _crc_default_net_ip: >-
+          {{
+            _decoded_net_env.crc_ci_bootstrap_networks_out.crc[cifmw_crc_default_network | default('default')].ip |
+            ansible.utils.ipaddr('address')
+          }}
+        dns_servers_string: >-
+          {{
+           ( _crc_default_net_ip, ansible_facts['dns']['nameservers'][0:1] | join(' ') ) | list
+          }}
+      become: true
+      ansible.builtin.shell:
+        cmd: |-
+          nmcli con mod '{{ controller_default_connection_out.stdout | trim }}' ipv4.dns '{{ dns_servers_string | join(' ') }}' ipv4.route-metric 100;
+          nmcli con up '{{ controller_default_connection_out.stdout | trim }}';
+
+- name: "Ensure persistent SSH access"
+  hosts: all
+  tasks:
+    - name: Inject key in ansible_user
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user }}"
+        key: "{{ hostvars['controller']['persistent_ssh_key'] }}"
+
+    - name: Inject key in root
+      become: true
+      ansible.posix.authorized_key:
+        user: "root"
+        key: "{{ hostvars['controller']['persistent_ssh_key'] }}"
+
+- name: "Add cloud-admin user on Compute"
+  hosts: computes
+  tasks:
+    - name: Create cloud-admin
+      become: true
+      ansible.builtin.user:
+        name: cloud-admin
+        shell: /bin/bash
+
+    - name: Inject key in cloud-admin
+      become: true
+      ansible.posix.authorized_key:
+        user: "cloud-admin"
+        key: "{{ hostvars['controller']['persistent_ssh_key'] }}"
+
+    - name: Allow cloud-admin on sudo
+      become: true
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/cloud-admin"
+        content: |-
+          cloud-admin ALL=(ALL) NOPASSWD:ALL
+        mode: "0640"
+
+- name: Set some fancy hostname
+  hosts: all,!crc,!rh-subscription
+  tasks:
+    - name: Inject hostname in configuration file
+      become: true
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+        use: "systemd"

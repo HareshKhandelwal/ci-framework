@@ -1,0 +1,57 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+
+- name: Set RHOL/CRC configuration options and if fail print
+  vars:
+    _patches: >-
+      {{
+        hostvars[inventory_hostname] |
+        dict2items |
+        selectattr('key', 'match', 'cifmw_rhol_crc_config_patch_.*') |
+        sort(attribute='key') |
+        map(attribute='value')
+      }}
+    _config: >-
+        {{
+          cifmw_rhol_crc_config_defaults |
+          ansible.builtin.combine(cifmw_rhol_crc_config) |
+          ansible.builtin.combine(_patches) |
+          dict2items
+        }}
+  block:
+    - name: Set RHOL/CRC configuration options
+      register: configuration_result
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          {{ cifmw_rhol_crc_binary }} config set
+          {{ item.key }} {{ item.value }} 2>&1 |
+          tee -a {{ cifmw_rhol_crc_basedir }}/logs/crc-config.log
+      loop: "{{ _config }}"
+  rescue:
+    - name: Output any patches available
+      ansible.builtin.debug:
+        var: _patches
+
+    - name: Output generated config data set
+      ansible.builtin.debug:
+        var: _config
+
+    - name: Fail for good
+      ansible.builtin.fail:
+        msg: >-
+          Error detected, check the debug data above.

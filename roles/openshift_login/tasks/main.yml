@@ -1,0 +1,122 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Ensure output directory exists
+  tags:
+    - always
+  ansible.builtin.file:
+    path: "{{ cifmw_openshift_login_basedir }}/artifacts"
+    state: directory
+    mode: "0755"
+
+- name: OpenShift login
+  ansible.builtin.include_tasks:
+    file: "login.yml"
+
+- name: Fetch OpenShift API URL
+  environment:
+    PATH: "{{ cifmw_path }}"
+    KUBECONFIG: "{{ cifmw_openshift_login_kubeconfig }}"
+  ansible.builtin.command:
+    cmd: "oc whoami --show-server=true"
+  register: cifmw_openshift_login_api_out
+
+- name: Fetch OpenShift kubeconfig context
+  environment:
+    PATH: "{{ cifmw_path }}"
+    KUBECONFIG: "{{ cifmw_openshift_login_kubeconfig }}"
+  ansible.builtin.command:
+    cmd: "oc whoami -c"
+  register: cifmw_openshift_login_context_out
+
+- name: Fetch OpenShift current user
+  environment:
+    PATH: "{{ cifmw_path }}"
+    KUBECONFIG: "{{ cifmw_openshift_login_kubeconfig }}"
+  ansible.builtin.command:
+    cmd: "oc whoami"
+  register: cifmw_openshift_login_user_out
+  retries: "{{ cifmw_openshift_login_retries }}"
+  delay: "{{ cifmw_openshift_login_retries_delay }}"
+
+- name: Set OpenShift user, context and API facts
+  vars:
+    # In OCP kube:admin user, the one in the cluster
+    # can maps to the OAuth enabled user kubeadmin.
+    # whoami, the way we use to return the user always
+    # returns kube:admin for that user, but that username
+    # cannot be used to login using OAuth. This behaviour
+    # is hardcoded inside OCP itself:
+    # https://github.com/openshift/library-go/blob/master/pkg/authentication/bootstrapauthenticator/bootstrap.go#L24-L26
+    _oauth_user: >-
+      {{
+        cifmw_openshift_login_user_out.stdout
+        if (cifmw_openshift_login_user_out.stdout != 'kube:admin')
+        else 'kubeadmin'
+      }}
+  ansible.builtin.set_fact:
+    cifmw_openshift_login_api: "{{ cifmw_openshift_login_api_out.stdout }}"
+    cifmw_openshift_login_context: "{{ cifmw_openshift_login_context_out.stdout }}"
+    cifmw_openshift_login_user: "{{ _oauth_user }}"
+    cifmw_openshift_kubeconfig: "{{ cifmw_openshift_login_kubeconfig }}"
+    cifmw_openshift_api: "{{ cifmw_openshift_login_api_out.stdout }}"
+    cifmw_openshift_context: "{{ cifmw_openshift_login_context_out.stdout }}"
+    cifmw_openshift_user: "{{ _oauth_user }}"
+    cifmw_openshift_token: "{{ cifmw_openshift_login_token | default(omit) }}"
+    cifmw_install_yamls_environment: >-
+      {{  ( cifmw_install_yamls_environment |
+            combine({'KUBECONFIG': cifmw_openshift_login_kubeconfig})
+          ) if cifmw_install_yamls_environment is defined else omit
+      }}
+    cacheable: true
+
+- name: Create the openshift_login parameters file
+  tags:
+    - always
+  vars:
+    cifmw_openshift_login_params_content: |
+      cifmw_openshift_kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+      cifmw_openshift_api: "{{ cifmw_openshift_api }}"
+      cifmw_openshift_context: "{{ cifmw_openshift_context }}"
+      cifmw_openshift_user: "{{ cifmw_openshift_user }}"
+      {% if cifmw_openshift_token is defined %}
+      cifmw_openshift_token: "{{ cifmw_openshift_token  }}"
+      {% endif %}
+  ansible.builtin.copy:
+    dest: "{{ cifmw_basedir|default(ansible_user_dir ~ '/ci-framework-data') }}/artifacts/parameters/openshift-login-params.yml"
+    content: "{{ cifmw_openshift_login_params_content | from_yaml | to_nice_yaml }}"
+
+- name: Update the install-yamls-params with KUBECONFIG
+  when: cifmw_install_yamls_environment is defined
+  block:
+    - name: Read the install yamls parameters file
+      ansible.builtin.slurp:
+        path: "{{ cifmw_basedir|default(ansible_user_dir ~ '/ci-framework-data') }}/artifacts/parameters/install-yamls-params.yml"
+      register: cifmw_openshift_login_install_yamls_artifacts_slurp
+
+    - name: Append the KUBECONFIG to the install yamls parameters
+      ansible.builtin.copy:
+        content: >-
+          {{
+            cifmw_openshift_login_install_yamls_artifacts_slurp['content'] | b64decode | from_yaml |
+            combine(
+              {
+                'cifmw_install_yamls_environment': {
+                  'KUBECONFIG': cifmw_openshift_login_kubeconfig
+                }
+              }, recursive=true) | to_nice_yaml
+          }}
+        dest: "{{ cifmw_basedir|default(ansible_user_dir ~ '/ci-framework-data') }}/artifacts/parameters/install-yamls-params.yml"

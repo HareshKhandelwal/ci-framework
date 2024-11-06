@@ -1,0 +1,78 @@
+---
+# Zuul Job template to avoid repetition of calling jobs in multiple repos
+- project-template:
+    name: podified-multinode-edpm-baremetal-pipeline
+    description: |
+      Project template to run content provider with EDPM and
+      baremetal job.
+    github-check:
+      jobs:
+        - openstack-k8s-operators-content-provider
+        - podified-multinode-edpm-deployment-crc: &content_provider
+            dependencies:
+              - openstack-k8s-operators-content-provider
+        - cifmw-crc-podified-edpm-baremetal: *content_provider
+
+- project-template:
+    name: podified-multinode-edpm-pipeline
+    description: |
+      Project template to run content provider with EDPM job.
+    github-check:
+      jobs:
+        - openstack-k8s-operators-content-provider
+        - podified-multinode-edpm-deployment-crc: *content_provider
+        - podified-multinode-hci-deployment-crc: *content_provider
+
+- project-template:
+    name: podified-ironic-operator-pipeline
+    description: |
+      Project template to run content provider with ironic podified job.
+    github-check:
+      jobs:
+        - noop
+        - openstack-k8s-operators-content-provider
+        - podified-multinode-ironic-deployment:
+            dependencies:
+              - openstack-k8s-operators-content-provider
+
+- project-template:
+    name: podified-multinode-edpm-ci-framework-pipeline
+    description: |
+      Project template to run content provider for EDPM jobs,
+      with dependency on smaller jobs.
+    github-check:
+      jobs:
+        - openstack-k8s-operators-content-provider:
+            requires:
+              - cifmw-pod-pre-commit
+              - cifmw-molecule
+        - podified-multinode-edpm-deployment-crc: *content_provider
+        - cifmw-crc-podified-edpm-baremetal: *content_provider
+        - podified-multinode-hci-deployment-crc: *content_provider
+        - cifmw-multinode-tempest: *content_provider
+
+- project-template:
+    name: data-plane-adoption-ci-framework-pipeline
+    description: |
+      Project template to run content provider with data-plane adoption job,
+      with dependency on smaller jobs.
+    github-check:
+      jobs:
+        - openstack-k8s-operators-content-provider:
+            requires:
+              - cifmw-pod-pre-commit
+              - cifmw-molecule
+        - adoption-standalone-to-crc-ceph-provider:
+            dependencies:
+              - openstack-k8s-operators-content-provider
+
+- project-template:
+    name: data-plane-adoption-pipeline
+    description: |
+      Project template to run content provider with data-plane adoption job.
+    github-check:
+      jobs:
+        - openstack-k8s-operators-content-provider
+        - adoption-standalone-to-crc-ceph-provider:
+            dependencies:
+              - openstack-k8s-operators-content-provider

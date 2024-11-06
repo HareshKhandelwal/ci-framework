@@ -1,0 +1,67 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Create a temproary directory to hold the rpms
+  ansible.builtin.tempfile:
+    suffix: gating
+    state: directory
+  register: _repodir
+
+- name: Copy the generated rpms
+  ansible.builtin.shell:
+    cmd: >
+      set -o pipefail &&
+      rm -rf {{ _repodir.path }}/*;
+      [[ $(find {{ cifmw_bop_build_repo_dir }}/DLRN/data/repos -type f -name '*.rpm') ]] &&
+      find {{ cifmw_bop_build_repo_dir }}/DLRN/data/repos -type f -name '*.rpm' -print0 | xargs -0 cp -t {{ _repodir.path }} ||
+      echo "no DLRN builds";
+
+- name: Run createrepo on generated rpms
+  ansible.builtin.command:
+    cmd: createrepo .
+    chdir: '{{ _repodir.path }}'
+
+- name: Copy the gating content to destination
+  ansible.builtin.copy:
+    remote_src: true
+    src: "{{ _repodir.path }}/"
+    dest: "{{ cifmw_bop_gating_repo_dest }}"
+
+- name: Add gating.repo file to install the required built packages
+  ansible.builtin.copy:
+    content: |
+      [gating-repo]
+      # All gating repo contents must be present in distro.repos.d directory
+      baseurl=file:///etc/distro.repos.d
+      enabled=1
+      gpgcheck=0
+      priority=1
+    dest: "{{ cifmw_bop_gating_repo_dest }}/gating.repo"
+
+- name: Serve gating repo
+  ansible.builtin.import_tasks: serve_gating_repo.yml
+
+- name: Check for DLRN repo at the destination
+  ansible.builtin.stat:
+    path: "{{ cifmw_bop_gating_repo_dest }}/delorean.repo"
+  register: _dlrn_repo
+
+- name: Lower the priority of DLRN repos to allow installation from gating repo
+  when: _dlrn_repo.stat.exists
+  ansible.builtin.replace:
+    path: "{{ cifmw_bop_gating_repo_dest }}/delorean.repo"
+    regexp: "priority=1"
+    replace: "priority=20"

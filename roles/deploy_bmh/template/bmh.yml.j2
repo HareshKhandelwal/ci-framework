@@ -1,0 +1,35 @@
+---
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: {{ node_name }}
+  namespace: {{ cifmw_deploy_bmh_namespace }}
+{% if cifmw_deploy_bmh_disable_inspection %}
+  annotations:
+    inspect.metal3.io: "disabled"
+{% endif %}
+  labels:
+    app: openstack
+    workload: {{ node_name.split('-')[0] }}
+spec:
+  bmc:
+    address: {{ node_data['connection'] }}
+    credentialsName: {{ node_name }}-bmc-secret
+    disableCertificateVerification: {{ cifmw_deploy_bmh_disable_certificate_validation }}
+{% for nic in (node_data['nics'] | default([])) if nic['network'] == cifmw_deploy_bmh_boot_interface %}
+  bootMACAddress: {{ nic.mac }}
+{% endfor                                                                            %}
+  bootMode: {{ node_data['boot_mode'] }}
+  online: {{ 'true' if node_data['status'] | default("") == "running" else 'false' }}
+{% if 'root_device_hint' in node_data                                                                    %}
+{# Ensure integer values are rendered as integers and not as strings #}
+{% set hint_value = node_data['root_device_hint']
+  if node_data['root_device_hint'] | int != 0  else
+  '"' + node_data['root_device_hint'] + '"'                                                              %}
+{% set hint_field = node_data.root_device_hint_field | default(cifmw_deploy_bmh_root_device_hint_field)  %}
+  rootDeviceHints:
+    {{ hint_field }}: {{ hint_value }}
+{% endif                                                                                                 %}
+{% if 'nmstate' in node_data %}
+  preprovisioningNetworkDataName: {{ node_name }}-nmstate-secret
+{% endif %}

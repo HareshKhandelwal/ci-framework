@@ -1,0 +1,227 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+
+- name: Define the localized variables for performing the tasks here.
+  vars:
+    _fixed_names: >-
+      {{
+        cifmw_libvirt_manager_fixed_networks_defaults +
+        cifmw_libvirt_manager_fixed_networks
+      }}
+    data:
+      name: >-
+        {{
+          (cifmw_libvirt_manager_net_prefix_add | bool and
+           item.key not in _fixed_names) |
+          ternary('cifmw-' + item.key, item.key)
+        }}
+      xml: >-
+        {{
+          (cifmw_libvirt_manager_net_prefix_add | bool and
+           item.key not in _fixed_names) |
+          ternary(
+            item.value | replace(item.key, 'cifmw-' ~ item.key),
+            item.value
+          )
+        }}
+  ansible.builtin.set_fact:
+    networks: "{{ (networks | default([])) + [data] }}"
+  loop: "{{ _cifmw_libvirt_manager_layout.networks | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Ensure networks are defined
+  community.libvirt.virt_net:
+    command: define
+    name: "{{ item.name }}"
+    xml: "{{ item.xml }}"
+    uri: "qemu:///system"
+  loop: "{{ networks }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Ensure networks are created/started
+  community.libvirt.virt_net:
+    command: create
+    name: "{{ item.name }}"
+    uri: "qemu:///system"
+  loop: "{{ networks }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Ensure networks are active
+  community.libvirt.virt_net:
+    state: active
+    name: "{{ item.name }}"
+    uri: "qemu:///system"
+  loop: "{{ networks }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Ensure networks enabled to autostart
+  community.libvirt.virt_net:
+    autostart: true
+    name: "{{ item.name }}"
+    uri: "qemu:///system"
+  loop: "{{ networks }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+
+- name: Add a dummy interface to bridges if required
+  when: cifmw_libvirt_manager_attach_dummy_interface_on_bridges | bool
+  ansible.builtin.include_tasks: create_networks_dummy_interfaces.yml
+
+## Ensure we get dnsmasq DHCP service for all created networks
+# Refreshing network facts will ensure we get the new interfaces.
+# They (usually?) have the same name as the network itself.
+- name: Refresh networking facts on host
+  ansible.builtin.setup:
+    gather_subset:
+      - '!all,!min'
+      - network
+
+- name: Build needed network/dnsmasq related content
+  vars:
+    _name: "{{ item | replace('-', '_') }}"
+    _no_prefix_name: "{{ _name | regex_replace('cifmw[-_]','') }}"
+    _ipv6: >-
+      {{
+        (ansible_facts[_name].ipv6 is defined) |
+        ternary(ansible_facts[_name].ipv6 |
+                selectattr('scope', 'equalto', 'global') | first, {})
+      }}
+    _default_gw_net: >-
+      {% set out = '' -%}
+      {% if cifmw_libvirt_manager_default_gw_nets is defined -%}
+      {%   set out = cifmw_libvirt_manager_default_gw_nets -%}
+      {% else -%}
+      {%   set out = cifmw_libvirt_manager_pub_net -%}
+      {% endif -%}
+      {% if out is string -%}
+      {%   set out = [out] %}
+      {% endif -%}
+      {{ out }}
+    _dns_options: |-
+      {% if ansible_facts[_name].ipv4 is defined -%}
+      - "option:dns-server,{{ ansible_facts[_name].ipv4.address }}"
+      {% endif -%}
+      {% if ansible_facts[_name].ipv6 is defined -%}
+      - "option6:dns-server,[{{ _ipv6.address }}]"
+      {% endif -%}
+      {% if _no_prefix_name not in _default_gw_net -%}
+      - "option:router"
+      {% endif -%}
+    _dns_listener:
+      - "{{ ansible_facts[_name].ipv4.address | default('') }}"
+      - "{{ _ipv6.address | default('') }}"
+    _local_net_info:
+      - name: "{{ _no_prefix_name }}"
+        original_name: "{{ item }}"
+        ranges:
+          - label: "{{ _no_prefix_name }}"
+            start_v4: >-
+              {%- if ansible_facts[_name].ipv4 is defined -%}
+              {{ ansible_facts[_name].ipv4.address | ansible.utils.ipmath(1) }}
+              {%- endif -%}
+            prefix_length_v4: >-
+              {%- if ansible_facts[_name].ipv4 is defined -%}
+              {{ ansible_facts[_name].ipv4.prefix }}
+              {%- endif -%}
+            start_v6: >-
+              {%- if ansible_facts[_name].ipv6 is defined -%}
+              {{ _ipv6.address | ansible.utils.ipmath(1) }}
+              {%- endif -%}
+            prefix_length_v6: >-
+              {%- if ansible_facts[_name].ipv6 is defined -%}
+              {{ _ipv6.prefix }}
+              {%- endif -%}
+            options: "{{ _dns_options | from_yaml }}"
+  ansible.builtin.set_fact:
+    _network_data: "{{ _network_data | default([]) + _local_net_info }}"
+    _dns_listeners: >-
+      {{ (_dns_listeners | default([])) + [item] }}
+  loop: "{{ (networks | map(attribute='name') | flatten) }}"
+
+- name: Deploy dnsmasq
+  vars:
+    _no_dnsmasq: >-
+      {{
+        cifmw_libvirt_manager_no_dnsmasq_nets_defaults +
+        cifmw_libvirt_manager_no_dnsmasq_nets
+      }}
+    cifmw_dnsmasq_enable_dns: true
+    cifmw_dnsmasq_interfaces: "{{ _dns_listeners | difference(_no_dnsmasq) }}"
+    cifmw_dnsmasq_exclude_lo: true
+    cifmw_dnsmasq_listen_addresses:
+      - "127.0.0.2"
+    cifmw_dnsmasq_raw_config: |
+      {% for nic in _no_dnsmasq %}
+      no-dhcp-interface={{ nic }}
+      {% endfor %}
+  ansible.builtin.import_role:
+    name: dnsmasq
+
+- name: Create dnsmasq networks
+  when:
+    - item.original_name not in _no_dnsmasq
+  vars:
+    _no_dnsmasq: >-
+      {{
+        cifmw_libvirt_manager_no_dnsmasq_nets_defaults +
+        cifmw_libvirt_manager_no_dnsmasq_nets
+      }}
+    cifmw_dnsmasq_network_name: "{{ item.name }}"
+    cifmw_dnsmasq_network_state: present
+    cifmw_dnsmasq_network_definition: "{{ item }}"
+    cifmw_dnsmasq_network_listen_addresses: "{{ _dns_address[item.name] }}"
+  ansible.builtin.include_role:
+    name: dnsmasq
+    tasks_from: manage_network.yml
+  loop: "{{ _network_data }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Ensure network is in correct zone
+  become: true
+  notify: Restart firewalld
+  ansible.builtin.shell:
+    cmd: >-
+      firewall-cmd --zone public
+      --remove-interface={{ item.name }}
+      --permanent;
+      firewall-cmd --zone libvirt
+      --add-interface={{ item.name }}
+      --permanent;
+  loop: "{{ networks }}"
+  loop_control:
+    label: "{{ item.name }}"
+  async: 120
+  poll: 0
+
+- name: Extract public IP address from network bridge
+  block:
+    - name: Extract IP address from network bridges
+      ansible.builtin.include_tasks:
+        file: network_bridge_info_gen.yml
+      loop: "{{ networks }}"
+      loop_control:
+        label: "{{ item.name }}"
+  rescue:
+    - name: Clear error if IP address isn't defined
+      ansible.builtin.meta: clear_host_errors
+      when: networkxml.msg == 'Xpath /network/ip does not reference a node!'

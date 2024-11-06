@@ -1,0 +1,84 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+# Here we rescue and not force error to preseve
+# the ignore_errors: true
+- name: Try to get CA bundle from OCP and generate tls-ca-bundle.pem
+  block:
+    - name: Get CA bundle data with retries
+      environment:
+        KUBECONFIG: "{{ cifmw_openshift_kubeconfig }}"
+        PATH: "{{ cifmw_path }}"
+      ansible.builtin.command:
+        cmd: 'oc get secret combined-ca-bundle -n openstack -o "jsonpath={.data.tls-ca-bundle\.pem}"'
+      retries: 10
+      no_log: true
+      delay: 3
+      until: _ca_bundle_data.rc == 0
+      register: _ca_bundle_data
+
+    - name: Set _ca_bundle fact if CA returned from OCP
+      when:
+        - _ca_bundle_data.rc == 0
+      no_log: true
+      ansible.builtin.set_fact:
+        _ca_bundle: >-
+          {{ _ca_bundle_data.stdout | ansible.builtin.b64decode }}
+
+    - name: Creating tls-ca-bundle.pem from CA bundle
+      when: _ca_bundle | default('') | length > 0
+      ansible.builtin.copy:
+        dest: "{{ cifmw_install_openstack_ca_file_full_path }}"
+        content: "{{ _ca_bundle }}"
+        mode: "0644"
+  rescue:
+    - name: Dump _ca_bundle vars
+      ansible.builtin.debug:
+        var:
+          - _ca_bundle_data
+          - _ca_bundle
+        msg: >-
+          Error detected, please check assertions and
+          debugging output above.
+
+- name: Inject OpenStackControlplane CA file if present
+  block:
+    - name: Check if OpenStackControlplane CA file is present
+      register: _ca_bundle_file
+      ansible.builtin.stat:
+        path: "{{ cifmw_install_openstack_ca_file_full_path }}"
+        get_attributes: false
+        get_checksum: false
+        get_mime: false
+
+    - name: Call install_ca role to inject OpenStackControlplane CA file if present
+      when: _ca_bundle_file.stat.exists
+      vars:
+        cifmw_install_ca_bundle_src: "{{ cifmw_install_openstack_ca_file_full_path }}"
+      ansible.builtin.include_role:
+        role: install_ca
+  rescue:
+    - name: Dump _ca_bundle vars
+      ansible.builtin.debug:
+        var:
+          - _ca_bundle_file
+          - cifmw_install_openstack_ca_file_full_path
+
+    - name: Fail for good
+      ansible.builtin.fail:
+        msg: >-
+          Error detected, please check assertions and
+          debugging output above.

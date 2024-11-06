@@ -1,0 +1,186 @@
+---
+- name: Ensure needed parameter is properly set
+  ansible.builtin.assert:
+    that:
+      - cifmw_architecture_scenario is defined
+      - cifmw_architecture_scenario is not none
+    msg: >-
+      cifmw_architecture_scenario must be provided.
+
+- name: Ensure source original values file exists
+  block:
+    - name: Stat original source file
+      register: _src_stat
+      ansible.builtin.stat:
+        path: "{{ cifmw_ci_gen_kustomize_values_src_file }}"
+        get_attributes: false
+        get_checksum: false
+        get_mime: false
+
+    - name: Assert source file exists
+      ansible.builtin.assert:
+        that:
+          - _src_stat.stat.exists
+        msg: >-
+          {{ cifmw_ci_gen_kustomize_values_src_file }} doesn't exist.
+
+- name: Load original values file
+  register: _original
+  ansible.builtin.slurp:
+    src: "{{ cifmw_ci_gen_kustomize_values_src_file }}"
+
+- name: Expose common data for future usage
+  vars:
+    _raw_manifests: "{{ _original.content | b64decode | from_yaml_all }}"
+    _raw_config_maps: >-
+      {{
+         _raw_manifests |
+         selectattr('kind', 'defined') |
+         selectattr('kind', 'equalto', 'ConfigMap')
+      }}
+    _target_config_map: >-
+      {{
+         (
+          _raw_config_maps |
+          selectattr('metadata.annotations', 'defined') |
+          selectattr('metadata.name', 'equalto', cifmw_ci_gen_kustomize_values_name) |
+          first | default({})
+         ) if cifmw_ci_gen_kustomize_values_name is defined and cifmw_ci_gen_kustomize_values_name != ""
+         else {}
+      }}
+    _local_config_query: >-
+          [?(metadata.annotations."config.kubernetes.io/local-config")=='true']
+    _config_map_content: >-
+      {{
+        _target_config_map |
+        default(
+            _raw_config_maps | default([]) |
+            json_query(_local_config_query) | first | default({})
+          , true)
+      }}
+    _datatype: >-
+      {{
+        cifmw_ci_gen_kustomize_values_name |
+        default(_config_map_content.metadata.name, true)
+      }}
+    _dest_dir: >-
+      {{
+        (cifmw_ci_gen_kustomize_values_snippets_basedir,
+         cifmw_ci_gen_kustomize_values_snippets_dir_prefix ~ _datatype) |
+         path_join
+      }}
+  ansible.builtin.set_fact:
+    values_datatype: "{{ _datatype }}"
+    snippet_datadir: "{{ _dest_dir }}"
+    original_content: "{{ _config_map_content }}"
+    _cifmw_gen_kustomize_values_extra_manifests: >-
+      {{
+        _raw_manifests | reject('equalto', _config_map_content)
+      }}
+    _cifmw_gen_kustomize_values_base_cm_content: >-
+      {{
+        _config_map_content |
+        ansible.utils.remove_keys(target=['^nodes?(_[0-9]+)?$'],
+                                  matching_parameter='regex')
+      }}
+    cacheable: false
+
+- name: Ensure we get the needed data depending on the values type
+  when:
+    - ((role_path, 'tasks', _tasks) | path_join) is file
+  vars:
+    _tasks: "{{ values_datatype | replace('-', '_') }}.yml"
+  ansible.builtin.include_tasks: "{{ _tasks }}"
+
+- name: Ensure output directory exists
+  ansible.builtin.file:
+    path: "{{ snippet_datadir }}"
+    state: directory
+    mode: "0755"
+
+- name: Generate CI snippet
+  when:
+    - _tmpl_check_path | length > 0
+  vars:
+    _tmpl_name: >-
+      {{ cifmw_ci_gen_kustomize_values_src_file | basename }}.j2
+    _tmpl_path: >-
+      {{
+        (role_path, 'templates', cifmw_architecture_scenario, values_datatype, _tmpl_name) | path_join
+      }}
+    _common_tmpl_path: >-
+      {{
+        (role_path, 'templates', 'common', values_datatype, _tmpl_name) | path_join
+      }}
+    _tmpl_check_path: >-
+      {{
+        [_tmpl_path, _common_tmpl_path] | select('exists')
+      }}
+  ansible.builtin.template:
+    backup: true
+    dest: >-
+      {{
+        (snippet_datadir,
+         '02_ci_data.yaml') | path_join
+      }}
+    src: "{{ _tmpl_check_path | first }}"
+    mode: "0644"
+
+- name: Generate the base64 CI ConfigMap patches
+  vars:
+    _patches_tuple: >-
+      {{
+        cifmw_ci_gen_kustomize_values_userdata_b64 |
+        cifmw_gen_kustomize_values_b64_combine(
+          name=values_datatype,
+          base_extra_patches=_cifmw_gen_kustomize_values_extra_manifests | list
+        )
+      }}
+  ansible.builtin.set_fact:
+    _base64_patch: "{{ _patches_tuple[0] }}"
+    _cifmw_gen_kustomize_values_extra_manifests: "{{ _patches_tuple[1] }}"
+
+- name: Push base64 CI patches
+  ansible.builtin.copy:
+    backup: true
+    dest: >-
+      {{
+        (snippet_datadir,
+        '03_user_data_b64.yaml') | path_join
+      }}
+    content: >-
+      {{
+        _base64_patch |
+        default({}) |
+        to_nice_yaml
+      }}
+    mode: "0644"
+
+- name: Push user provided dataset
+  ansible.builtin.copy:
+    backup: true
+    dest: >-
+      {{
+        (snippet_datadir,
+         '04_user_data.yaml') | path_join
+      }}
+    content: >-
+      {{
+        cifmw_ci_gen_kustomize_values_userdata |
+        default({}) |
+        to_nice_yaml
+      }}
+    mode: "0644"
+
+- name: Copy the base values.yaml
+  ansible.builtin.copy:
+    backup: true
+    content: "{{ _cifmw_gen_kustomize_values_base_cm_content |to_nice_yaml }}"
+    dest: >-
+      {{
+        (
+          snippet_datadir,
+          cifmw_ci_gen_kustomize_values_original_cm_content_file_name
+        ) | path_join
+      }}
+    mode: "0644"

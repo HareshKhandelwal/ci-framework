@@ -1,0 +1,27 @@
+---
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  name: 90-enable-iscsi
+  labels:
+    machineconfiguration.openshift.io/role: {{ ocp_role }}
+    service: cinder
+spec:
+  config:
+    ignition:
+      version: 3.2.0
+    storage:
+      files:
+        - path: /etc/iscsi/iscsid.conf
+          overwrite: true
+          mode: 384
+          user:
+            name: root
+          group:
+            name: root
+          contents:
+            source: data:,node.session.initial_login_retry_max%20%3D%203%0Anode.conn%5B0%5D.timeo.login_timeout%20%3D%205%0Anode.session.auth.chap_algs%20%3D%20SHA3%2D256%2CSHA256%0A
+    systemd:
+      units:
+        - enabled: true
+          name: iscsid.service

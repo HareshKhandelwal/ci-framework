@@ -1,0 +1,184 @@
+---
+- name: "Create VM overlays or images for {{ vm_type }}"
+  become: true
+  vars:
+    _ocp_basename: >-
+      {{
+        vm_data.disk_file_name | replace('_', '-')
+      }}
+    _diskfilename: >-
+      {{
+        vm is match('.*ocp.*') | ternary(_ocp_basename, vm_data.disk_file_name)
+      }}
+    _base_img_name: >-
+      {{
+        (vm_data.image_local_dir | default(ansible_user_dir),
+         _diskfilename) |
+         path_join
+      }}
+    _vm_id: >-
+      {{
+        vm | split('-') | last
+      }}
+    _img: >-
+      {{
+        (vm is match('.*ocp.*')) |
+        ternary(_base_img_name ~ "-" ~ _vm_id ~ ".qcow2",
+                _base_img_name)
+      }}
+    _workload: "{{ cifmw_libvirt_manager_basedir }}/workload"
+    _img_dir: "{{ cifmw_libvirt_manager_basedir }}/images"
+    _chdir: >-
+      {{ (is_base_img | default(false) | bool) | ternary(_img_dir, _workload) }}
+  block:
+    - name: "Create VM image for {{ vm }}"
+      vars:
+        _vm_img: >-
+          {{ vm }}.qcow2
+      ansible.builtin.command:
+        cmd: >-
+          qemu-img create
+          {% if vm_data.disk_file_name != 'blank' %}
+          -o backing_file={{ _img }},backing_fmt=qcow2
+          {% endif %}
+          -f qcow2
+          "{{ _vm_img }}"
+          "{{ vm_data.disksize | default ('40') }}G"
+        creates: "{{ _vm_img }}"
+        chdir: "{{ _chdir }}"
+
+    - name: "Ensure file ownership and rights for {{ vm }}"
+      vars:
+        _vm_img: >-
+          {{ vm }}.qcow2
+      ansible.builtin.file:
+        path: "{{ (_chdir, _vm_img) | path_join }}"
+        group: "qemu"
+        mode: "0664"
+        owner: "{{ ansible_user_id }}"
+        state: file
+
+    - name: "Define VMs for type {{ vm }}"
+      community.libvirt.virt:
+        command: define
+        xml: "{{ lookup('template', cifmw_libvirt_manager_vm_template) }}"
+        uri: "qemu:///system"
+
+- name: "Attach listed networks to the VMs {{ vm }}"
+  vars:
+    vm_item: "{{ vm }}"
+    networks: "{{ vm_data.nets }}"
+  ansible.builtin.include_tasks: net_to_vms.yml
+
+- name: "Attach spines/leafs networks to the VMs {{ vm }}"
+  when:
+    - cifmw_libvirt_manager_spineleaf_setup
+    - vm_data.spineleafnets is defined
+  vars:
+    _vm_id: >-
+      {{
+        vm | split('-') | last
+      }}
+    vm_item: "{{ vm }}"
+    networks: "{{ vm_data.spineleafnets[_vm_id | int] }}"
+  ansible.builtin.include_tasks: net_to_vms.yml
+
+- name: "Manage volumes for VMs {{ vm }}"
+  when:
+    - vm_data.extra_disks_num is defined
+    - vm_data.extra_disks_num | int > 0
+  vars:
+    _pool_dir: >-
+      {{
+        (vm is match('^ocp.*')) |
+        ternary(cifmw_libvirt_manager_ocp_pool_dir,
+                cifmw_libvirt_manager_pool_dir)
+      }}
+    _vname: >-
+      {{
+        vm | regex_replace('ocp-([0-9]+)', 'ocp-master-\1')
+      }}
+    vol_prefix: >-
+      {{
+        [cifmw_libvirt_manager_vol_prefix,
+        'cifmw-', _vname] | join('')
+      }}
+  block:
+    - name: "Create the requested extra disks for {{ vm }}"
+      vars:
+        vol_num: "{{ vm_data.extra_disks_num }}"
+        vol_size: "{{ vm_data.extra_disks_size }}"
+      ansible.builtin.include_tasks: volumes.yml
+
+    - name: "Find volume attachments for VM {{ vm }}"
+      register: _found_vols
+      ansible.builtin.find:
+        path: "{{ _pool_dir }}"
+        pattern: "{{ vol_prefix }}-vol-*.xml"
+
+    - name: "Attach volumes for VM {{ vm }}"
+      when:
+        - _found_vols.matched != 0
+      vars:
+        _vm_name: "cifmw-{{ vm }}"
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          {% for f in _found_vols.files -%}
+          {% set _vol = f.path | basename | replace('.xml', '') -%}
+          virsh -c qemu:///system domblklist {{ _vm_name }} | grep {{ _vol }} ||
+          virsh -c qemu:///system attach-device {{ _vm_name }} {{ f.path }}
+          --config --persistent;
+          {% endfor -%}
+
+- name: Extract UUID
+  block:
+    - name: Get VM UUID
+      register: _uuid
+      vars:
+        _vm_name: "cifmw-{{ vm }}"
+      ansible.builtin.command:
+        cmd: >-
+          virsh -c qemu:///system
+          domuuid {{ _vm_name }}
+
+    - name: Inject UUID in dataset
+      vars:
+        _vm_name: "cifmw-{{ vm }}"
+      ansible.builtin.set_fact:
+        cifmw_libvirt_manager_uuids: >-
+          {{
+            cifmw_libvirt_manager_uuids |
+            default({}) |
+            combine({_vm_name: _uuid.stdout | trim})
+          }}
+
+- name: Create and attach ISO
+  when:
+    - vm_data.disk_file_name != 'blank'
+    - vm is not match('^(crc|ocp).*$')
+    - vm_data.manage | default(true) | bool
+  vars:
+    _img_dir: "{{ cifmw_libvirt_manager_basedir }}/workload"
+    _vm_name: "cifmw-{{ vm }}"
+    _iso_name: "{{ vm }}.iso"
+    _iso_path: "{{ [_img_dir, _iso_name] | ansible.builtin.path_join }}"
+  block:
+    - name: Create cloud-init ISO
+      ansible.builtin.include_tasks:
+        file: create_cloud_init_iso.yml
+
+    - name: Attach cloud-init ISO if exists
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          virsh -c qemu:///system domblklist {{ _vm_name }} |
+          grep {{ _iso_path }} ||
+          virsh -c qemu:///system attach-disk
+          --domain {{ _vm_name }}
+          --source {{ _iso_path }}
+          --target sdz
+          --targetbus usb
+          --type cdrom
+          --mode readonly
+          --persistent

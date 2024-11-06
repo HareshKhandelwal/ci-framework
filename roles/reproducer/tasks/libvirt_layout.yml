@@ -1,0 +1,110 @@
+---
+- name: Deploy layout on target host
+  tags:
+    - libvirt_layout
+  ansible.builtin.import_role:
+    name: libvirt_manager
+    tasks_from: deploy_layout
+
+- name: Get all generated inventory on remote hypervisors
+  when:
+    - _cifmw_libvirt_manager_layout.vms.controller.target is defined
+    - _cifmw_libvirt_manager_layout.vms.controller.target != inventory_hostname
+  block:
+    - name: Get deployed VM group inventories
+      register: _inventories
+      ansible.builtin.slurp:
+        path: >-
+          {{
+            (cifmw_reproducer_basedir, 'reproducer-inventory',
+             item ~ '-group.yml') |
+            path_join
+          }}
+      loop: >-
+          {{
+            _cifmw_libvirt_manager_layout.vms |
+            dict2items |
+            selectattr('value.target', 'equalto', inventory_hostname) |
+            map(attribute="key")
+          }}
+
+- name: Run tasks on controller-0 hypervisor
+  when:
+    - (
+        _cifmw_libvirt_manager_layout.vms.controller.target is defined and
+        _cifmw_libvirt_manager_layout.vms.controller.target == inventory_hostname
+      ) or
+      _cifmw_libvirt_manager_layout.vms.controller.target is undefined
+  block:
+    - name: Inject remote inventories onto main hypervisor
+      ansible.builtin.include_tasks: gather_inventories.yml
+      loop: "{{ hostvars.keys() }}"
+      loop_control:
+        loop_var: "host"
+
+    - name: Push generated inventory from hypervisor
+      ansible.builtin.command:  # noqa: command-instead-of-module
+        cmd: >-
+          rsync -r {{ cifmw_reproducer_basedir }}/reproducer-inventory/
+          zuul@controller-0:reproducer-inventory
+
+- name: Run post tasks in OCP cluster case
+  when:
+    - _use_ocp | bool
+    - (
+        _cifmw_libvirt_manager_layout.vms.ocp.target is defined and
+        _cifmw_libvirt_manager_layout.vms.ocp.target == inventory_hostname
+      ) or
+      _cifmw_libvirt_manager_layout.vms.ocp.target is undefined
+  tags:
+    - bootstrap
+    - bootstrap_layout
+  ansible.builtin.import_tasks: ocp_post.yml
+
+# Configure the controller before CRC. This one will run the networking_mapper
+# role, ensuring we have all the needed data on the controller-0. This
+# will allow us to configure the CRC node in order to ensure we have
+# appropriate settings there.
+- name: Configure Controller node
+  tags:
+    - bootstrap
+    - bootstrap_layout
+    - bootstrap_env
+  ansible.builtin.include_tasks: configure_controller.yml
+
+- name: Configure CRC node if available
+  when:
+    - _use_crc | bool
+    - (
+        _cifmw_libvirt_manager_layout.vms.crc.target is defined and
+        _cifmw_libvirt_manager_layout.vms.crc.target == inventory_hostname
+      ) or
+      _cifmw_libvirt_manager_layout.vms.crc.target is undefined
+  tags:
+    - bootstrap
+    - bootstrap_layout
+  ansible.builtin.include_tasks:
+    file: configure_crc.yml
+    apply:
+      tags:
+        - bootstrap
+        - bootstrap_layout
+
+# ctlplane network is configured for pre-provisioned edpm nodes.
+# In order to do this, we'll consume the generated networking_mapper
+# environment file, and filter on all known edpm node types.
+- name: Configure EDPM based nodes ctlplane network
+  when:
+    - >-
+      (compute.key in (groups['computes'] | default([]))) or
+      (compute.key in (groups['cephs'] | default([]))) or
+      (compute.key in (groups['networkers'] | default([])))
+  vars:
+    _host: "{{ compute.key }}"
+    _prefix: "{{cifmw_networking_env_definition.networks.ctlplane.network_v4 | ansible.utils.ipaddr('prefix') }}"
+  ansible.builtin.include_tasks: configure_computes.yml
+  loop: >-
+    {{ cifmw_networking_env_definition.instances | dict2items }}
+  loop_control:
+    loop_var: compute
+    label: "{{ compute.key }}"

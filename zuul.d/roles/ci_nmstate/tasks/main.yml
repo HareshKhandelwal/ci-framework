@@ -1,0 +1,110 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Load Networking Environment Definition
+  when: cifmw_ci_nmstate_instance_config is not defined
+  ansible.builtin.import_role:
+    name: networking_mapper
+    tasks_from: load_env_definition.yml
+
+- name: Initialize NMstates for each instance
+  ansible.builtin.set_fact:
+    _cifmw_ci_nmstate_configs: >-
+      {{
+        (cifmw_ci_nmstate_instance_config | default({})) |
+        dict2items |
+        rejectattr("key", "in", cifmw_ci_nmstate_instances_skip_list) |
+        items2dict
+      }}
+    cacheable: true
+
+- name: Build NMstates from the Networking Environment Definition
+  vars:
+    _instance_nmstate: "{{ cifmw_networking_env_definition | ci_nmstate_map_instance_nets(item) }}"
+  ansible.builtin.set_fact:
+    _cifmw_ci_nmstate_configs: >-
+      {{
+        _cifmw_ci_nmstate_configs |
+        combine({ item: _instance_nmstate if _instance_nmstate | length > 0 else omit })
+      }}
+    cacheable: true
+  loop: >-
+    {{
+      (
+        (cifmw_networking_env_definition | default({}))
+        .instances | default({})
+      ).keys() |
+      reject("in", _cifmw_ci_nmstate_configs.keys()) |
+      reject("in", cifmw_ci_nmstate_instances_skip_list)
+    }}
+  loop_control:
+    label: "{{ item }}"
+
+- name: Get k8s nodes
+  when: cifmw_openshift_kubeconfig is defined
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+    api_key: "{{ cifmw_openshift_token | default(omit)}}"
+    context: "{{ cifmw_openshift_context | default(omit)}}"
+    kind: Node
+  register: cifmw_ci_nmstate_k8s_nodes_out
+
+- name: Set the hosts that will provision nmstate using k8s
+  vars:
+    k8s_nodes_hostnames: >-
+      {{
+          cifmw_ci_nmstate_k8s_nodes_out.resources |
+          default([]) |
+          selectattr("metadata.name", "defined") |
+          map(attribute="metadata.name")
+      }}
+    k8s_hosts: >-
+      {{
+          hostvars | dict2items |
+          selectattr("value.ansible_hostname", "defined") |
+          selectattr("key", "in", _cifmw_ci_nmstate_configs.keys()) |
+          selectattr("value.ansible_hostname", "in", k8s_nodes_hostnames) |
+          map(attribute="key") |
+          list
+      }}
+  ansible.builtin.set_fact:
+    _cifmw_ci_nmstate_k8s_hosts: "{{ k8s_hosts }}"
+    _cifmw_ci_nmstate_unmanaged_hosts: >-
+      {{
+        _cifmw_ci_nmstate_configs.keys() |
+        reject("in", k8s_hosts) |
+        list
+      }}
+    cacheable: true
+
+- name: Provision k8s workers with nmstate
+  when: cifmw_openshift_kubeconfig is defined
+  ansible.builtin.include_tasks: nmstate_k8s_install.yml
+
+- name: Provision unmanaged nodes with nmstate
+  vars:
+    cifmw_ci_nmstate_unmanaged_node_config: >-
+      {{
+        cifmw_ci_nmstate_unmanaged_config_template |
+        combine(
+          _cifmw_ci_nmstate_configs[cifmw_ci_nmstate_unmanaged_host],
+          recursive=True
+        )
+      }}
+  ansible.builtin.include_tasks: nmstate_unmanaged_provision_node.yml
+  loop: "{{ _cifmw_ci_nmstate_unmanaged_hosts | default([]) }}"
+  loop_control:
+    loop_var: cifmw_ci_nmstate_unmanaged_host

@@ -1,0 +1,94 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Ensure mandatory directories exist
+  tags:
+    - always
+  ansible.builtin.file:
+    path: "{{ cifmw_operator_build_basedir }}/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - artifacts
+    - logs
+
+- name: Initialize role output
+  tags:
+    - always
+  ansible.builtin.set_fact:
+    cifmw_operator_build_output: "{{ cifmw_operator_build_output }}"
+    cifmw_operator_build_meta_name: "{{ cifmw_operator_build_meta_name }}"
+
+- name: Populate operators list with zuul info
+  when:
+    - zuul is defined
+  vars:
+    item: "{{ zuul_item }}"
+  ansible.builtin.include_tasks: zuul_info.yml
+  loop: "{{ zuul['items'] }}"
+  loop_control:
+    loop_var: zuul_item
+
+- name: Merge lists of operators
+  ansible.builtin.set_fact:
+    operators_list: "{{ [cifmw_operator_build_operators, zuul_info_operators | default([])] \
+                    | community.general.lists_mergeby('name') }}"
+
+- name: Get meta_operator src dir from operators_list
+  ansible.builtin.set_fact:
+    cifmw_operator_build_meta_src: "{{ (operators_list \
+                                   | selectattr('name', 'eq', cifmw_operator_build_meta_name) | map(attribute='src') \
+                                   | first ) | default(cifmw_operator_build_meta_src, true) }}"
+
+- name: Adds meta-operator to the list
+  when:
+    - cifmw_operator_build_meta_build is true
+  vars:
+    meta_operator_info:
+      - name: "{{ cifmw_operator_build_meta_name }}"
+        src: "{{ cifmw_operator_build_meta_src }}"
+  ansible.builtin.set_fact:
+    operators_list: "{{ [operators_list, meta_operator_info] \
+                    | community.general.lists_mergeby('name') }}"
+
+- name: Clone operator's code when src dir is empty
+  vars:
+    operator: "{{ item }}"
+  ansible.builtin.include_tasks: clone.yml
+  loop: "{{ operators_list }}"
+
+- name: Building operators
+  when:
+    - item.name != cifmw_operator_build_meta_name
+  vars:
+    operator: "{{ item }}"
+  ansible.builtin.include_tasks: build.yml
+  loop: "{{ operators_list }}"
+
+- name: Building meta operator
+  when:
+    - cifmw_operator_build_meta_build is true
+    - item.name == cifmw_operator_build_meta_name
+  vars:
+    operator: "{{ item }}"
+  ansible.builtin.include_tasks: build.yml
+  loop: "{{ operators_list }}"
+
+- name: Gather role output
+  ansible.builtin.copy:
+    dest: "{{ cifmw_operator_build_basedir }}/artifacts/custom-operators.yml"
+    content: "{{ cifmw_operator_build_output | to_nice_yaml }}"
+    mode: "0644"

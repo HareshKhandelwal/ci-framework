@@ -1,0 +1,58 @@
+---
+- name: "Run ci/playbooks/e2e-prepare.yml"
+  hosts: controller, primary
+  gather_facts: true
+  tasks:
+    - name: Clone repos in the job workspace
+      ansible.builtin.include_role:
+        name: prepare-workspace
+
+    - name: Create zuul-output directory
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/zuul-output/logs"
+        state: directory
+        mode: "0755"
+
+    - name: Install required packages
+      become: true
+      ansible.builtin.package:
+        name:
+          - make
+          - python3
+          - podman
+          - python3-pip
+
+    - name: Output pip related things
+      ansible.builtin.command:
+        cmd: pip --version
+
+    - name: Install requirements
+      community.general.make:
+        chdir: "{{ ansible_user_dir }}/{{ zuul.projects['github.com/openstack-k8s-operators/ci-framework'].src_dir }}"
+        target: setup_molecule
+
+    - name: Add cronjob to trigger job stats
+      ansible.builtin.cron:
+        name: Get cri-o container stats
+        minute: "*"
+        job: >-
+          /usr/bin/date >> /tmp/crio-stats.log;
+          {{ ansible_user_dir }}/src/github.com/openstack-k8s-operators/ci-framework/scripts/get-stats.sh >>
+          /tmp/crio-stats.log
+      when: cifmw_openshift_crio_stats | default(true)
+
+    - name: Construct project change list
+      ansible.builtin.set_fact:
+        zuul_change_list: "{{ zuul_change_list | default([]) + [item.project.short_name] }}"
+        cacheable: true
+      with_items: "{{ zuul['items'] }}"
+      when:
+        - zuul is defined
+        - "'change_url' in item"
+
+- name: Build openstack-ansibleee-runner image
+  ansible.builtin.import_playbook: build_runner_image.yml
+  when:
+    - zuul_change_list is defined
+    - "'edpm-ansible' in zuul_change_list"
+    - registry_login_enabled | default('false') | bool

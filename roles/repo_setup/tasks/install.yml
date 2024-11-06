@@ -1,0 +1,36 @@
+---
+- name: Ensure directories are present
+  ansible.builtin.file:
+    path: "{{ cifmw_repo_setup_basedir }}/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - tmp
+    - artifacts/repositories
+
+- name: Make sure git-core package is installed
+  become: true
+  ansible.builtin.package:
+    name: "git-core"
+    state: present
+  tags:
+    - packages
+    - bootstrap
+
+- name: Get repo-setup repository # noqa: latest[git]
+  ansible.builtin.git:
+    accept_hostkey: true
+    dest: "{{ cifmw_repo_setup_basedir }}/tmp/repo-setup"
+    repo: "{{ cifmw_repo_setup_src }}"
+
+- name: Initialize python venv and install requirements
+  ansible.builtin.pip:
+    virtualenv: "{{ cifmw_repo_setup_basedir }}/venv"
+    requirements: "{{ cifmw_repo_setup_basedir }}/tmp/repo-setup/requirements.txt"
+    virtualenv_command: "python3 -m venv  --system-site-packages --upgrade-deps"
+
+- name: Install repo-setup package
+  ansible.builtin.command:
+    cmd: "{{ cifmw_repo_setup_basedir }}/venv/bin/python setup.py install"
+    chdir: "{{ cifmw_repo_setup_basedir }}/tmp/repo-setup"
+    creates: "{{ cifmw_repo_setup_basedir }}/venv/bin/repo-setup"

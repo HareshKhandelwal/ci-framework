@@ -1,0 +1,304 @@
+---
+- name: Assert mandatory bits are defined
+  ansible.builtin.assert:
+    that:
+      - stage is defined
+      - stage_id is defined
+      - stage['path'] is defined
+      - stage['wait_conditions'] is defined
+      - stage['wait_conditions'] | length > 0
+      - stage['values'] is defined
+      - stage['values'] | length > 0
+      - stage['build_output'] is defined
+      - stage['build_output'] | length > 0
+
+- name: Assert all wait conditions are valid
+  vars:
+    _stage_name_id: "stage_{{ stage_id }}"
+    _stage_name: "stage_{{ stage.build_output | basename | splitext | first }}"
+    _custom_conditions: >-
+      {{
+        cifmw_architecture_wait_condition[_stage_name] |
+        default(cifmw_architecture_wait_condition[_stage_name_id] |
+        default([]))
+      }}
+    _pattern: '^(oc|kubectl).*wait.*$'
+  block:
+    - name: Check custom wait conditions
+      ansible.builtin.assert:
+        that: item is match(_pattern)
+        msg: "The following custom condition is invalid: {{ item }}"
+        quiet: true
+      ignore_errors: true  # noqa: ignore-errors
+      register: _custom_wait_cond_result
+      loop: "{{ _custom_conditions }}"
+
+    - name: Check builtin wait conditions
+      ansible.builtin.assert:
+        that: item is match(_pattern)
+        msg: "The following builtin condition is invalid: {{ item }}"
+        quiet: true
+      ignore_errors: true  # noqa: ignore-errors
+      register: _builtin_wait_cond_result
+      loop: "{{ stage.wait_conditions }}"
+
+    - name: Check wait_conditions validation result
+      when:
+        - _custom_wait_cond_result is failed or
+          _builtin_wait_cond_result is failed
+      ansible.builtin.fail:
+        msg: >-
+          Review and correct the faulty wait_conditions listed above.
+
+    - name: Set stage_wait_conditions fact
+      ansible.builtin.set_fact:
+        _wait_conditions: "{{ stage.wait_conditions + _custom_conditions }}"
+
+- name: Group tasks under the same tags
+  vars:
+    _stage_name_id: "stage_{{ stage_id }}"
+    _stage_name: "stage_{{ stage.build_output | basename | splitext | first }}"
+    _tag_name_id: "deploy_architecture_{{ _stage_name_id }}"
+    _tag_name: "deploy_architecture_{{ _stage_name }}"
+    _skip_tags: >-
+      {% if cifmw_deploy_architecture_skip_stages is defined and
+         cifmw_deploy_architecture_skip_stages is string -%}
+      {{ cifmw_deploy_architecture_skip_stages | ansible.builtin.split(",") }}
+      {% elif cifmw_deploy_architecture_skip_stages is defined and
+         cifmw_deploy_architecture_skip_stages is not string and
+         cifmw_deploy_architecture_skip_stages is iterable -%}
+      {{ cifmw_deploy_architecture_skip_stages }}
+      {% else -%}
+      {{ [] }}
+      {% endif -%}
+  tags:
+    - "deploy_architecture_stage_{{ stage_id }}"
+  when:
+    - _tag_name not in _skip_tags
+    - _tag_name_id not in _skip_tags
+  block:
+    - name: Ensure source files exists
+      register: _src
+      when:
+        - item.src_file is defined
+      ansible.builtin.stat:
+        path: >-
+          {{
+            (cifmw_kustomize_deploy_architecture_repo_dest_dir,
+             stage['path'], item.src_file) | path_join
+          }}
+        get_attributes: false
+        get_checksum: false
+        get_mime: false
+      loop: "{{ stage['values'] }}"
+
+    - name: Assert source files exist
+      ansible.builtin.assert:
+        that:
+          - (item.stat is defined and item.stat.exists) or item.skipped
+        quiet: true
+      loop: "{{ _src.results }}"
+      loop_control:
+        label: "{{ item.stat.path | default('none') | basename }}"
+
+    - name: "Executing pre_stage hooks for {{ stage.path }}"
+      when:
+        - not cifmw_kustomize_deploy_generate_crs_only | bool
+      vars:
+        hooks: "{{ stage.pre_stage_run | default([]) }}"
+        step: "pre_{{ _stage_name_id }}_run"
+      ansible.builtin.include_role:
+        name: run_hook
+
+    - name: "Generate values.yaml for {{ stage.path }}"
+      when:
+        - _val.src_file is defined
+      vars:
+        _name: "{{ _val['name'] }}"
+        cifmw_ci_gen_kustomize_values_name: "{{ _name }}"
+        cifmw_ci_gen_kustomize_values_src_file: >-
+          {{
+            (cifmw_kustomize_deploy_architecture_repo_dest_dir,
+             stage['path'], _val.src_file
+            ) |
+            path_join
+           }}
+        cifmw_ci_gen_kustomize_values_userdata: >-
+          {{
+            (
+              _cifmw_kustomize_deploy_user_kustomize[_stage_name_id][_name] is defined |
+              ternary(_cifmw_kustomize_deploy_user_kustomize[_stage_name_id][_name], {})
+            ) |
+            combine(
+              _cifmw_kustomize_deploy_user_kustomize[_stage_name][_name] is defined |
+              ternary(_cifmw_kustomize_deploy_user_kustomize[_stage_name][_name], {})
+            )
+          }}
+        cifmw_ci_gen_kustomize_values_userdata_b64: >-
+          {{
+            (
+              _cifmw_kustomize_deploy_user_base64_kustomize[_stage_name_id][_name] is defined |
+              ternary(_cifmw_kustomize_deploy_user_base64_kustomize[_stage_name_id][_name], [])
+            )
+            + (
+              _cifmw_kustomize_deploy_user_base64_kustomize[_stage_name][_name] is defined |
+              ternary(_cifmw_kustomize_deploy_user_base64_kustomize[_stage_name][_name], [])
+            )
+          }}
+      ansible.builtin.include_role:
+        name: ci_gen_kustomize_values
+      loop: "{{ stage['values'] }}"
+      loop_control:
+        loop_var: _val
+        index_var: _val_id
+        label: "{{ _val['name'] }}"
+
+    - name: "Copy generated values for {{ stage.path }}"
+      when:
+        - _val.src_file is defined
+      ansible.builtin.copy:
+        mode: "0644"
+        backup: true
+        remote_src: true
+        src: >-
+          {{
+            (cifmw_kustomize_deploy_basedir,
+             'artifacts', 'ci_gen_kustomize_values',
+             _val['name'], 'values.yaml') | path_join
+          }}
+        dest: >-
+          {{
+            (cifmw_kustomize_deploy_architecture_repo_dest_dir,
+            stage['path'], _val.src_file
+            ) |
+            path_join
+           }}
+      loop: "{{ stage['values'] }}"
+      loop_control:
+        loop_var: _val
+        label: "{{ _val['name'] }}"
+
+    - name: Stop before building kustomization if requested
+      when:
+        - cifmw_deploy_architecture_stopper is defined
+        - cifmw_deploy_architecture_stopper in _stage_stopper
+      vars:
+        _stage_stopper:
+          - "pre_kustomize_{{ _stage_name_id }}"
+          - "pre_kustomize_{{ _stage_name  }}"
+      ansible.builtin.fail:
+        msg: "Failing on demand {{ cifmw_deploy_architecture_stopper }}"
+
+    - name: "Build and store kustomized content for {{ stage.path }}"
+      vars:
+        _output: >-
+          {{
+            (cifmw_kustomize_deploy_architecture_repo_dest_dir,
+             stage['path'], stage['build_output']) |
+             path_join | realpath
+          }}
+        _chdir: >-
+          {{
+            (cifmw_kustomize_deploy_architecture_repo_dest_dir,
+             stage['path']) |
+             path_join | realpath
+          }}
+      block:
+        # We have to use plain `oc kustomize`: lookup would
+        # be executed locally, on the ansible-controller. In CI,
+        # that would be the zuul-executor, and we don't manage them,
+        # leading to a risk to either NOT have kustomize, or an old,
+        # deprecated version.
+        - name: "Build kustomized content for {{ stage.path }}"
+          register: _kustomize_output
+          environment:
+            PATH: "{{ cifmw_path | default(ansible_env.PATH) }}"
+          ansible.builtin.command:
+            chdir: "{{ _chdir }}"
+            cmd: "oc kustomize"
+
+        - name: Output kustomize build in final file
+          ansible.builtin.copy:
+            backup: true
+            dest: "{{ _output }}"
+            content: "{{ _kustomize_output.stdout }}"
+            mode: "0644"
+
+        - name: "Store kustomized content in artifacts for {{ stage.path }}"
+          ansible.builtin.copy:
+            remote_src: true
+            src: "{{ _output }}"
+            dest: >-
+              {{
+                (cifmw_kustomize_deploy_kustomizations_dest_dir,
+                 stage['build_output'] | basename) | path_join
+              }}
+            mode: "0644"
+
+    - name: Stop after building kustomization if requested
+      when:
+        - cifmw_deploy_architecture_stopper is defined
+        - cifmw_deploy_architecture_stopper in _stage_stopper
+      vars:
+        _stage_stopper:
+          - "post_kustomize_{{ _stage_name_id }}"
+          - "post_kustomize_{{ _stage_name }}"
+      ansible.builtin.fail:
+        msg: "Failing on demand {{ cifmw_deploy_architecture_stopper }}"
+
+    # We have to use plain `oc apply -f` here due to the
+    # way kubernetes.core.k8s module works: we can't use
+    # - `state: present` and expect it to update the resource;
+    # - `state: present force: true` since it would replace the resource completly
+    # - `state: patched` if the resource doesn't exist
+    - name: "Apply generated content for {{ stage.path }}"
+      register: oc_apply
+      changed_when: "'unchanged' not in oc_apply.stdout"
+      when:
+        - not cifmw_kustomize_deploy_generate_crs_only | bool
+      vars:
+        _cr: >-
+          {{
+            (cifmw_kustomize_deploy_architecture_repo_dest_dir,
+             stage['path'], stage['build_output']
+             ) | path_join
+          }}
+      environment:
+        KUBECONFIG: "{{ cifmw_openshift_kubeconfig }}"
+        PATH: "{{ cifmw_path }}"
+      ansible.builtin.command:
+        cmd: "oc apply -f {{ _cr }}"
+
+    - name: "Build Wait Conditions for {{ stage.path }}"
+      when:
+        - not cifmw_kustomize_deploy_generate_crs_only | bool
+      environment:
+        KUBECONFIG: "{{ cifmw_openshift_kubeconfig }}"
+        PATH: "{{ cifmw_path }}"
+      block:
+        - name: "Run Wait Conditions for {{ stage.path }}"
+          ansible.builtin.command:
+            cmd: "{{ wait_condition }}"
+          loop: "{{ _wait_conditions }}"
+          loop_control:
+            loop_var: wait_condition
+
+    - name: Stop after applying CRs if requested
+      when:
+        - cifmw_deploy_architecture_stopper is defined
+        - cifmw_deploy_architecture_stopper in _stage_stopper
+      vars:
+        _stage_stopper:
+          - "post_apply_{{ _stage_name_id }}"
+          - "post_apply_{{ _stage_name }}"
+      ansible.builtin.fail:
+        msg: "Failing on demand {{ cifmw_deploy_architecture_stopper }}"
+
+    - name: "Executing post_stage hooks for {{ stage.path }}"
+      when:
+        - not cifmw_kustomize_deploy_generate_crs_only | bool
+      vars:
+        hooks: "{{ stage.post_stage_run | default([]) }}"
+        step: "post_{{ _stage_name_id }}_run"
+      ansible.builtin.include_role:
+        name: run_hook

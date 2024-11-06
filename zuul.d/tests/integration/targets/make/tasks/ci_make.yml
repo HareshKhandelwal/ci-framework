@@ -1,0 +1,165 @@
+---
+- name: Create some directories
+  ansible.builtin.file:
+    path: "/tmp/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - artifacts
+    - logs
+    - project_makefile
+
+- name: Inject dummy Makefile
+  ansible.builtin.copy:
+    dest: /tmp/project_makefile/Makefile
+    content: |
+      .DEFAULT_GOAL := help
+      .RECIPEPREFIX := >
+      FOO_BAR ?= "toto"
+      help:
+      > @echo "This is the help thing showing ${FOO_BAR}"
+      failing:
+      > @exit 255
+    mode: "0644"
+
+- name: Run ci_script make without any extra_args
+  register: no_extra_args
+  ci_script:
+    script: make help
+    chdir: /tmp/project_makefile
+    output_dir: /tmp/artifacts
+
+- name: Inject some non-related file to validate index
+  ansible.builtin.copy:
+    dest: /tmp/artifacts/foobar
+    content: |
+      I'm a useless flag in here
+    mode: "0644"
+
+- name: Run ci_script make with extra_args
+  register: with_extra_args
+  ci_script:
+    script: make help
+    chdir: /tmp/project_makefile
+    output_dir: /tmp/artifacts
+    extra_args:
+      FOO_BAR: starwars
+
+- name: Ensure we have correct output
+  ansible.builtin.assert:
+    that:
+      - "'This is the help thing showing toto' in no_extra_args.stdout"
+      - "'This is the help thing showing starwars' in with_extra_args.stdout"
+
+- name: Try dry_run parameter
+  ci_script:
+    chdir: /tmp/project_makefile
+    output_dir: /tmp/artifacts
+    dry_run: true
+    script: make
+    extra_args:
+      FOO_BAR: startrek
+
+
+- name: Test with extra_args
+  ci_script:
+    chdir: /tmp/project_makefile
+    output_dir: /tmp/artifacts
+    script: make help
+    extra_args:
+      FOO_BAR: startrek
+      SOME_OTHER: jar-jar-binks
+
+
+- name: Test with extra_args passed as ansible variables and special chars /
+  block:
+    - name: Set env var
+      ansible.builtin.set_fact:
+        my_env_vars:
+          FOO_BAR: /=8GB /tmp=1GB /home=1GB /var=8GB
+          SOME_OTHER: Dune
+        other_env_vars:
+          ONE: 1
+          FOO_BAR: Baz
+    - name: Run ci_script make with custom env variable
+      ci_script:
+        chdir: /tmp/project_makefile
+        output_dir: /tmp/artifacts
+        script: make help
+        extra_args: "{{ dict((my_env_vars|default({})), **(other_env_vars|default({}))) }}"
+    - name: Run ci_script make custom env var and default
+      ci_script:
+        chdir: /tmp/project_makefile
+        output_dir: /tmp/artifacts
+        script: make help
+        extra_args: "{{ my_env_vars | default({}) }}"
+
+- name: Run ci_script make with extra_args and default
+  ci_script:
+    chdir: /tmp/project_makefile
+    output_dir: /tmp/artifacts
+    script: make help
+    extra_args: "{{ other_env_vars | default({'FOO_BAR': 'titi'}) }}"
+
+- name: Run ci_script make with a faulty command
+  block:
+    - name: Run failing target
+      register: failing_make
+      failed_when:
+        - "'Error 255' not in failing_make.stdout"
+      ci_script:
+        chdir: /tmp/project_makefile
+        output_dir: /tmp/artifacts
+        script: make failing
+
+- name: Check generated files
+  tags:
+    - never
+  block:
+    - name: Set files attributes
+      ansible.builtin.set_fact:
+        files_to_check:
+          "/tmp/artifacts/ci_script_000_run_ci_script_make_without_any_extra_args.sh":
+            e19e15e8c10461c54a40a0ce00296aa887cf7756
+          "/tmp/artifacts/ci_script_001_run_ci_script_make_with_extra_args.sh":
+            4bbb01aa527121b670dbf533cc0fbc6ff725e0ab
+          "/tmp/artifacts/ci_script_002_try_dry_run_parameter.sh":
+            33cca9289d8bcef9fe070d810151ad67b42adc35
+          "/tmp/artifacts/ci_script_003_test_with_extra_args.sh":
+            863730abb0e0edd3edcb025c8fe4d2d12ace9d2a
+          "/tmp/artifacts/ci_script_004_run_ci_script_make_with_custom_env_variable.sh":
+            2b6737616136a7b33dfabe4ef673dccc6c4e9acb
+          "/tmp/artifacts/ci_script_005_run_ci_script_make_custom_env_var_and_default.sh":
+            85ecd67eac4c873e8d3b120035415e7709a25e0f
+          "/tmp/artifacts/ci_script_006_run_ci_script_make_with_extra_args_and_default.sh":
+            0fe9a340527f84628bd2c8f655150403f3afb8d1
+          "/tmp/artifacts/ci_script_007_run_failing_target.sh":
+            7d9c6fab3c87b65b0e6db9f1211d5dcde9f6f8a1
+          "/tmp/logs/ci_script_000_run_ci_script_make_without_any_extra_args.log":
+            6147c30d7f99d803a8a2e5eb357017bf1146cea9
+          "/tmp/logs/ci_script_001_run_ci_script_make_with_extra_args.log":
+            2784a3a2ac54ee7787687153cefb78a920793efa
+          "/tmp/logs/ci_script_003_test_with_extra_args.log":
+            5cd9ccee64ea4d0babe042f72717dc97809e9b7b
+          "/tmp/logs/ci_script_004_run_ci_script_make_with_custom_env_variable.log":
+            7756df69bf6879216075c159e3e1f19b4d98126e
+          "/tmp/logs/ci_script_005_run_ci_script_make_custom_env_var_and_default.log":
+            7da4babbb838e956ab49e06573926c893375e34c
+          "/tmp/logs/ci_script_006_run_ci_script_make_with_extra_args_and_default.log":
+            7756df69bf6879216075c159e3e1f19b4d98126e
+          "/tmp/logs/ci_script_007_run_failing_target.log":
+            a2e12c228875d1606ae9980ac6390f76bc2cd066
+
+    - name: Gather files
+      register: reproducer_scripts
+      ansible.builtin.stat:
+        path: "{{ item.key }}"
+      loop: "{{ files_to_check | dict2items }}"
+
+    - name: Assert file status
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists is defined
+          - item.stat.exists | bool
+          - item.stat.checksum == files_to_check[item.stat.path]
+      loop: "{{ reproducer_scripts.results }}"

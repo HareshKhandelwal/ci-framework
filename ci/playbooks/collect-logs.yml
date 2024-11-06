@@ -1,0 +1,159 @@
+---
+- name: "Run ci/playbooks/collect-logs.yml"
+  hosts: "{{ cifmw_zuul_target_host | default('all') }}"
+  gather_facts: true
+  tasks:
+    - name: Filter out host if needed
+      when:
+        - cifmw_zuul_target_host is defined
+        - cifmw_zuul_target_host != 'all'
+        - inventory_hostname != cifmw_zuul_target_host
+      ansible.builtin.meta: end_host
+
+    - name: Run block
+      block:
+        - name: Ensure file is present
+          register: molecule_report
+          ansible.builtin.stat:
+            path: /tmp/report.html
+
+        - name: Manage molecule report file
+          when:
+            - molecule_report.stat.exists
+          ansible.builtin.command:
+            chdir: "{{ ansible_user_dir }}/zuul-output/logs"
+            cmd: cp /tmp/report.html .
+
+        - name: Check if we get ci-framework-data basedir
+          register: cifmw_state
+          ansible.builtin.stat:
+            path: "{{ ansible_user_dir }}/ci-framework-data"
+
+        - name: Collect ci-framework-data content of interest
+          when:
+            - cifmw_state.stat.exists | bool
+          block:
+            - name: Create ci-framework-data log directory for zuul
+              ansible.builtin.file:
+                path: "{{ ansible_user_dir }}/zuul-output/logs/ci-framework-data"
+                state: directory
+                mode: "0755"
+
+            - name: Copy ci-framework interesting files
+              ansible.builtin.shell:
+                chdir: "{{ ansible_user_dir }}/zuul-output/logs/ci-framework-data"
+                cmd: |
+                  cp -ra {{ ansible_user_dir }}/ci-framework-data/logs . ;
+                  cp -ra {{ ansible_user_dir }}/ci-framework-data/artifacts . ;
+                  cp -ra {{ ansible_user_dir }}/ci-framework-data/tests . || true ;
+
+            - name: Get SELinux listing
+              ansible.builtin.shell:
+                chdir: "{{ ansible_user_dir }}/zuul-output/logs/"
+                cmd: |
+                  ls -lRZ --hide=venv --hide=repo-setup {{ ansible_user_dir }}/ci-framework-data > ./selinux-listing.log;
+
+            - name: Generate log index
+              ansible.builtin.copy:
+                dest: "{{ ansible_user_dir }}/zuul-output/logs/README.html"
+                src: "important-logs.html"
+
+        - name: Get some env related data
+          ignore_errors: true  # noqa: ignore-errors
+          ansible.builtin.shell:  # noqa: command-instead-of-module
+            chdir: "{{ ansible_user_dir }}/zuul-output/logs/"
+            cmd: |
+              rpm -qa | sort > ./installed-pkgs.log;
+              python --version > ./python.log;
+              pip3 --version >> ./python.log;
+              command -v ansible && ansible --version >> ./python.log;
+              pip3 freeze >> ./python.log;
+              dmesg -T > ./dmesg.log;
+
+        - name: Generate list of logs to collect in home directory
+          ansible.builtin.find:
+            paths: "{{ ansible_user_dir }}"
+            patterns: "*.log"
+          register: files_to_copy
+
+        - name: Copy logs from home directory
+          ignore_errors: true  # noqa: ignore-errors
+          ansible.builtin.copy:
+            src: "{{ item.path }}"
+            dest: "{{ ansible_user_dir }}/zuul-output/logs/"
+            remote_src: true
+          loop: "{{ files_to_copy.files }}"
+
+        - name: Copy crio stats log file
+          when: cifmw_openshift_crio_stats | default(true)
+          ignore_errors: true  # noqa: ignore-errors
+          ansible.builtin.copy:
+            src: /tmp/crio-stats.log
+            dest: "{{ ansible_user_dir }}/zuul-output/logs/"
+            owner: "{{ ansible_user }}"
+            group: "{{ ansible_user }}"
+            mode: "0644"
+            remote_src: true
+
+        - name: Get SELinux related data
+          become: true
+          ignore_errors: true  # noqa: ignore-errors
+          ansible.builtin.shell:
+            chdir: "{{ ansible_user_dir }}/zuul-output/logs/"
+            cmd: |
+              ausearch -i | grep denied > ./selinux-denials.log
+
+        - name: Create system configuration directory
+          ansible.builtin.file:
+            path: "{{ ansible_user_dir }}/zuul-output/logs/system-config/libvirt"
+            state: directory
+            mode: "0755"
+
+        - name: Get some of the system configurations
+          ignore_errors: true  # noqa: ignore-errors
+          become: true
+          ansible.builtin.shell:
+            chdir: "{{ ansible_user_dir }}/zuul-output/logs/system-config"
+            cmd: |
+              cp -r /etc/libvirt/*.conf libvirt/;
+              chown -R "{{ ansible_user }}" libvirt
+              chown "{{ ansible_user }}" *
+              cp /etc/containers/registries.conf {{ ansible_user_dir }}/zuul-output/logs/
+              cp -r /etc/containers/registries.conf.d {{ ansible_user_dir }}/zuul-output/logs/
+              chown -R "{{ ansible_user }}" {{ ansible_user_dir }}/zuul-output/logs/registries.conf.d
+
+        - name: Copy generated documentation if available
+          when:
+            - doc_available | default(false) | bool
+          ansible.builtin.copy:
+            remote_src: true
+            src: "{{ ansible_user_dir }}/{{ zuul.project.src_dir }}/docs/_build/html"
+            dest: "{{ ansible_user_dir }}/zuul-output/logs/doc_build"
+
+        - name: Copy generated AsciiDoc documentation if available
+          when:
+            - asciidoc_available | default(false) | bool
+          ansible.builtin.copy:
+            remote_src: true
+            src: "{{ ansible_user_dir }}/{{ zuul.project.src_dir }}/docs_build"
+            dest: "{{ ansible_user_dir }}/zuul-output/logs/docs_build"
+
+      always:
+        - name: Copy files from workspace on node
+          vars:
+            work_dir: "{{ ansible_user_dir }}/workspace"
+          ansible.builtin.include_role:
+            name: fetch-output
+
+        - name: Return artifact to Zuul
+          when:
+            - not skip_report | default(false)
+            - molecule_report.stat.exists
+          zuul_return:
+            data:
+              zuul:
+                artifacts:
+                  - name: "Molecule report"
+                    url: "report.html"
+                    metadata:
+                      type: html_report

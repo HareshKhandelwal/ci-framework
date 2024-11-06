@@ -1,0 +1,141 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Fetch user password from file in case is not provided by a variable
+  when:
+    - cifmw_openshift_login_password is not defined
+    - cifmw_openshift_password is not defined
+    - >-
+        (cifmw_openshift_login_password_file is defined) or
+        (cifmw_openshift_password_file is defined)
+  block:
+    - name: Check if the password file is present
+      ansible.builtin.stat:
+        path: "{{ cifmw_openshift_login_password_file | default(cifmw_openshift_password_file) }}"
+      register: cifmw_openshift_login_password_file_stat
+
+    - name: Fetch user password content
+      when: cifmw_openshift_login_password_file_stat.stat.exists
+      ansible.builtin.slurp:
+        src: "{{ cifmw_openshift_login_password_file | default(cifmw_openshift_password_file) }}"
+      register: cifmw_openshift_login_password_file_slurp
+
+    - name: Set user password as a fact
+      when: cifmw_openshift_login_password_file_slurp.content is defined
+      ansible.builtin.set_fact:
+        cifmw_openshift_login_password: "{{ cifmw_openshift_login_password_file_slurp.content | b64decode }}"
+        cacheable: true
+
+- name: Set role variables
+  ansible.builtin.set_fact:
+    cifmw_openshift_login_kubeconfig: >-
+     {{
+      cifmw_openshift_login_kubeconfig |
+      default(cifmw_openshift_kubeconfig) |
+      default(
+        ansible_env.KUBECONFIG if 'KUBECONFIG' in ansible_env else
+        cifmw_openshift_login_kubeconfig_default_path
+      ) | trim
+     }}
+    cifmw_openshift_login_user: "{{ cifmw_openshift_login_user | default(cifmw_openshift_user) | default(omit) }}"
+    cifmw_openshift_login_password: "{{ cifmw_openshift_login_password | default(cifmw_openshift_password) | default(omit) }}"
+    cifmw_openshift_login_api: "{{ cifmw_openshift_login_api | default(cifmw_openshift_api) | default(omit) }}"
+    cifmw_openshift_login_cert_login: "{{ cifmw_openshift_login_cert_login | default(false)}}"
+    cifmw_openshift_login_provided_token: "{{ cifmw_openshift_provided_token | default(omit) }}"
+    cacheable: true
+
+- name: Check if kubeconfig exists
+  ansible.builtin.stat:
+    path: "{{ cifmw_openshift_login_kubeconfig }}"
+  register: cifmw_openshift_login_kubeconfig_stat
+
+- name: Assert that enough data is provided to log in to OpenShift
+  ansible.builtin.assert:
+    that: >-
+      cifmw_openshift_login_kubeconfig_stat.stat.exists or
+      (cifmw_openshift_login_provided_token is defined and cifmw_openshift_login_provided_token != '') or
+      (
+        (cifmw_openshift_login_user is defined) and
+        (cifmw_openshift_login_password is defined) and
+        (cifmw_openshift_login_api is defined)
+      )
+    msg: "If an existing kubeconfig is not provided user/pwd or provided/initial token and API URL must be given"
+
+- name: Fetch kubeconfig content
+  when:
+    - cifmw_openshift_login_user is not defined
+    - cifmw_openshift_login_kubeconfig_stat.stat.exists
+  ansible.builtin.slurp:
+    src: "{{ cifmw_openshift_login_kubeconfig }}"
+  register: cifmw_openshift_login_kubeconfig_content_b64
+
+- name: Fetch x509 key based users
+  when:
+    - cifmw_openshift_login_user is not defined
+    - cifmw_openshift_login_kubeconfig_content_b64.content is defined
+  ansible.builtin.set_fact:
+    cifmw_openshift_login_key_based_users: >-
+      {{
+        (
+          cifmw_openshift_login_kubeconfig_content_b64.content |
+          b64decode |
+          from_yaml
+        ). users | default([]) |
+        selectattr('user.client-certificate-data', 'defined') |
+        map(attribute="name") |
+        map("split", "/") |
+        map("first")
+      }}
+    cacheable: true
+
+- name: Assign key based user if not provided and available
+  when:
+    - cifmw_openshift_login_user is not defined
+    - cifmw_openshift_login_key_based_users | default([]) | length > 0
+  ansible.builtin.set_fact:
+    cifmw_openshift_login_user: >-
+      {{
+        (cifmw_openshift_login_assume_cert_system_user | ternary('system:', '')) +
+        (cifmw_openshift_login_key_based_users | map('replace', 'system:', '') | unique | first)
+      }}
+    cifmw_openshift_login_cert_login: true
+    cacheable: true
+
+- name: Try fetch OpenShift's token
+  block:
+    - name: Set the retry count
+      ansible.builtin.set_fact:
+        cifmw_openshift_login_retries_cnt: >-
+          {{
+            0 if cifmw_openshift_login_retries_cnt is undefined else
+            cifmw_openshift_login_retries_cnt|int + 1
+          }}
+
+    - name: Fetch token
+      ansible.builtin.include_tasks: try_login.yml
+
+  rescue:
+    - name: Fail if no token
+      when: cifmw_openshift_login_retries_cnt|int == cifmw_openshift_login_retries
+      ansible.builtin.fail:
+        msg: Token fetch failed after retries
+
+    - name: Wait before reattempt
+      ansible.builtin.pause:
+        seconds: "{{ cifmw_openshift_login_retries_delay }}"
+
+    - name: Run login
+      ansible.builtin.include_tasks: login.yml

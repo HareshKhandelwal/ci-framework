@@ -1,0 +1,96 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Scrub the existence of dev-scripts deployed OCP cluster.
+  tags:
+    - never
+    - deepscrub
+  when: >-
+    (cifmw_devscripts_ocp_comply is undefined) or
+    (not cifmw_devscripts_ocp_comply) or
+    (cifmw_devscripts_force_cleanup | default(false) | bool)
+  block:
+    - name: Gather the configurations to be passed to dev-scripts.
+      ansible.builtin.set_fact:
+        cifmw_devscripts_config: >-
+          {{
+            cifmw_devscripts_config_defaults |
+            combine(cifmw_devscripts_config_overrides, recursive=true)
+          }}
+
+    - name: Gather the dev-scripts repo directory information.
+      ansible.builtin.stat:
+        path: "{{ cifmw_devscripts_repo_dir }}"
+      register: devscript_repodir
+
+    - name: Gather the metal3-dev-env repo directory information.
+      ansible.builtin.stat:
+        path: "{{ cifmw_devscripts_config_defaults.working_dir }}/metal3-dev-env"
+      register: metal3_dev_env_repodir
+
+    - name: Remove the deployed OpenShift platform.
+      when:
+        - not cifmw_devscripts_dry_run | bool
+        - devscript_repodir.stat.exists
+        - metal3_dev_env_repodir.stat.exists
+      community.general.make:
+        chdir: "{{ cifmw_devscripts_repo_dir }}"
+        target: clean
+      async: 600  # 10 minutes should be more than enough
+      poll: 10
+
+    - name: Remove the SSH key generated for accessing the platform
+      ansible.builtin.file:
+        path: "{{ cifmw_devscripts_artifacts_dir }}/{{ item }}"
+        state: absent
+      loop:
+        - "cifmw_ocp_access_key"
+        - "cifmw_ocp_access_key.pub"
+
+    - name: Cleanup the devscripts repo directory.
+      become: true
+      ansible.builtin.file:
+        path: "{{ cifmw_devscripts_repo_dir }}"
+        state: absent
+        force: true
+
+    - name: Cleanup the devscripts working directory.
+      become: true
+      ansible.builtin.file:
+        path: "{{ cifmw_devscripts_config.working_dir }}"
+        state: absent
+        force: true
+
+    - name: Cleanup DNS resolution artifacts.
+      ansible.builtin.include_role:
+        name: ci_network
+        tasks_from: cleanup-dns.yml
+
+    - name: Ensure no dangling qcow2 images
+      block:
+        - name: Get files
+          register: _found_imgs
+          ansible.builtin.find:
+            path: "{{ cifmw_devscripts_data_dir }}/images"
+            patterns: "{{ cifmw_devscripts_config.cluster_name }}_*.qcow2"
+
+        - name: Remove dangling images
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ _found_imgs.files }}"
+          loop_control:
+            label: "{{ item.path }}"

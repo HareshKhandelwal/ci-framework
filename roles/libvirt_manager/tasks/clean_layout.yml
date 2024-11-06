@@ -1,0 +1,317 @@
+---
+- name: Get installed packages list
+  ansible.builtin.package_facts: {}
+
+- name: Get virtqemud socket
+  register: _virtqemud
+  ansible.builtin.stat:
+    path: "/var/run/libvirt/virtqemud-sock"
+
+- name: Set _is_deepscrub internal fact
+  ansible.builtin.set_fact:
+    _is_deepscrub: >-
+      {{
+        'deepscrub' in ansible_run_tags or
+        (deepscrub is defined and deepscrub | bool)
+      }}
+
+- name: Perform the libvirt cleanup
+  when:
+    - ansible_facts.packages is defined
+    - >-
+      cifmw_libvirt_manager_dependency_packages |
+      difference(ansible_facts.packages.keys()) |
+      length == 0
+    - _virtqemud.stat.exists
+  block:
+    - name: List all of the existing virtual machines
+      register: vms_list
+      community.libvirt.virt:
+        command: list_vms
+        uri: "qemu:///system"
+
+    - name: Get pool configuration
+      community.libvirt.virt_pool:
+        command: facts
+        uri: "qemu:///system"
+
+    - name: Filter out target environment
+      ansible.builtin.set_fact:
+        cleanup_vms: "{{ vms_list.list_vms | select('match', '^cifmw-.*$') }}"
+
+    - name: Expose cleanup list
+      ansible.builtin.debug:
+        var: cleanup_vms
+
+    - name: Clean ssh known_hosts
+      ansible.builtin.known_hosts:
+        name: "{{ item }}"
+        state: absent
+      loop: "{{ cleanup_vms }}"
+
+    - name: Destroy machine
+      register: vm_destroy
+      community.libvirt.virt:
+        command: destroy
+        name: "{{ item }}"
+        uri: "qemu:///system"
+      loop: "{{ cleanup_vms }}"
+      failed_when:
+        - vm_destroy.rc is defined
+        - vm_destroy.rc > 1
+
+    - name: Undefine machine
+      community.libvirt.virt:
+        command: undefine
+        flags:
+          - nvram
+          - snapshots_metadata
+        name: "{{ item }}"
+        uri: "qemu:///system"
+      loop: "{{ cleanup_vms }}"
+
+    # KEEP this for now to ensure smoother migration
+    - name: "(localhost) Clean ssh jumpers"
+      when:
+        - inventory_hostname != 'localhost'
+      delegate_to: localhost
+      vars:
+        vm: "{{ item | replace('cifmw-', '') }}"
+      ansible.builtin.blockinfile:
+        path: "{{ lookup('env', 'HOME') }}/.ssh/config"
+        marker: "## {mark} {{ vm }} {{ inventory_hostname }}"
+        state: absent
+        create: true
+      loop: "{{ cleanup_vms }}"
+
+    # KEEP this for now to ensure smoother migration
+    - name: "({{ inventory_hostname }}) Clean ssh jumpers"  # noqa: name[template]
+      vars:
+        vm: "{{ item | replace('cifmw-', '') }}"
+      ansible.builtin.blockinfile:
+        path: "{{ ansible_user_dir }}/.ssh/config"
+        marker: "## {mark} {{ vm }}"
+        state: absent
+        create: true
+      loop: "{{ cleanup_vms }}"
+
+    - name: Get network list
+      register: nets_list
+      community.libvirt.virt_net:
+        command: list_nets
+        uri: "qemu:///system"
+
+    - name: Filter out target nets
+      vars:
+        _all_fixed: >-
+          {{
+            cifmw_libvirt_manager_fixed_networks_defaults +
+            cifmw_libvirt_manager_fixed_networks
+          }}
+        _cifmw_nets: >-
+          {{ nets_list.list_nets | select('match', '^cifmw-.*$') }}
+        _fixed_nets: >-
+          {{
+            nets_list.list_nets | community.general.lists_intersect(_all_fixed)
+          }}
+      ansible.builtin.set_fact:
+        cleanup_nets: "{{ _cifmw_nets + _fixed_nets }}"
+
+    - name: Expose cleanup list
+      ansible.builtin.debug:
+        var: cleanup_nets
+
+    - name: Remove dnsmasq network bits
+      vars:
+        cifmw_dnsmasq_network_name: "{{ item }}"
+        cifmw_dnsmasq_network_state: absent
+      ansible.builtin.include_role:
+        name: dnsmasq
+        tasks_from: manage_network.yml
+      loop: "{{ cleanup_nets }}"
+
+    - name: Destroy networks
+      register: net_destroy
+      community.libvirt.virt_net:
+        command: destroy
+        name: "{{ item }}"
+        uri: "qemu:///system"
+      loop: "{{ cleanup_nets }}"
+      failed_when:
+        - net_destroy.rc is defined
+        - net_destroy.rc > 1
+
+    - name: Undefine networks
+      community.libvirt.virt_net:
+        command: undefine
+        name: "{{ item }}"
+        uri: "qemu:///system"
+      loop: "{{ cleanup_nets }}"
+
+    - name: Ensure no trace of networks lays in nmcli
+      become: true
+      community.general.nmcli:
+        conn_name: "{{ item }}"
+        state: absent
+      loop: "{{ cleanup_nets }}"
+
+    - name: Clean firewalld libvirt zone
+      become: true
+      ansible.posix.firewalld:
+        zone: libvirt
+        interface: "{{ item }}"
+        state: disabled
+        permanent: true
+        immediate: true
+      loop: "{{ cleanup_nets }}"
+
+    - name: Disable masquerade in firewalld default zone
+      become: true
+      ansible.posix.firewalld:
+        masquerade: false
+        zone: "{{ cifmw_libvirt_manager_firewalld_default_zone }}"
+        permanent: true
+        immediate: true
+        state: enabled
+
+    - name: Disable forward in firewalld libvirt zone
+      become: true
+      notify: Restart firewalld
+      ansible.builtin.command:
+        cmd: >-
+          firewall-cmd --permanent --zone libvirt --remove-forward
+
+    # Pool management
+    - name: Remove cifmw storage pool
+      vars:
+        action: "delete"
+      ansible.builtin.include_tasks: storage_pool.yml
+
+    - name: Remove overlay images from ocp_volume pools if exists
+      when:
+        - item is not match('^base-.*$')
+      ansible.builtin.command:
+        cmd: >-
+          virsh -c qemu:///system vol-delete
+          --vol {{ item }}
+          --pool {{ cifmw_libvirt_manager_ocp_pool }}
+      loop: >-
+        {{
+          ansible_libvirt_pools[cifmw_libvirt_manager_ocp_pool].volumes |
+           default([])
+        }}
+
+    - name: Remove ocp_volumes storage pool
+      when:
+        - _is_deepscrub | bool
+      vars:
+        action: "delete"
+        cifmw_libvirt_manager_storage_pool: >-
+          {{ cifmw_libvirt_manager_ocp_pool }}
+        cifmw_libvirt_manager_pool_dir: >-
+          {{ cifmw_libvirt_manager_ocp_pool_dir }}
+      ansible.builtin.include_tasks: storage_pool.yml
+
+    - name: Refresh all pools after actions
+      when:
+        - "item.value.status == 'running'"
+      community.libvirt.virt_pool:
+        command: refresh
+        name: "{{ item.key }}"
+      loop: "{{ ansible_libvirt_pools | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+- name: Get temporary key status
+  register: _tmp_key
+  ansible.builtin.stat:
+    path: "{{ ansible_user_dir }}/.ssh/cifmw_reproducer_key.pub"
+
+- name: Remove temporary ssh key from authorized_keys
+  when:
+    - _tmp_key.stat.exists
+    - _is_deepscrub | bool
+  block:
+    - name: Get public key
+      register: _pub_key
+      ansible.builtin.slurp:
+        path: "{{ ansible_user_dir }}/.ssh/cifmw_reproducer_key.pub"
+
+    - name: Remove public key
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user_id }}"
+        key: "{{ _pub_key['content'] | b64decode }}"
+        state: absent
+
+    - name: Remove keypair
+      ansible.builtin.file:
+        state: absent
+        path: "{{ ansible_user_dir }}/.ssh/{{ item }}"
+      loop:
+        - cifmw_reproducer_key.pub
+        - cifmw_reproducer_key
+
+- name: Empty libvirt logs
+  become: true
+  block:
+    - name: List libvirt logs
+      register: _logs
+      ansible.builtin.find:
+        path: '/var/log/libvirt/qemu/'
+
+    - name: Remove detected logs
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ _logs.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+- name: Remove workload and volumes
+  ansible.builtin.file:
+    path: "{{ cifmw_libvirt_manager_basedir }}/{{ item }}"
+    state: absent
+  loop:
+    - workload
+    - volumes
+    - artifacts/debug_network_data.yml
+    - artifacts/debug_pub_net_value.txt
+    - artifacts/debug_cifmw_libvirt_manager_layout.yml
+    - artifacts/interfaces-info.yml
+    - artifacts/libvirt-uuids.yml
+    - artifacts/net-map-def-patch.yml
+
+- name: Deepscrub data
+  when:
+    - _is_deepscrub | bool
+  ansible.builtin.file:
+    path: "{{ cifmw_libvirt_manager_basedir }}/{{ item }}"
+    state: absent
+  loop:
+    - images
+    - artifacts/virtual-nodes.yml
+
+- name: Clean virtualBMC
+  ansible.builtin.import_role:
+    name: virtualbmc
+    tasks_from: cleanup.yml
+
+- name: Clean remote ssh config
+  vars:
+    cifmw_ssh_jumper_config_dir: "{{ ansible_user_dir }}/.ssh"
+  ansible.builtin.include_role:
+    name: "ssh_jumper"
+    tasks_from: "cleanup.yml"
+
+- name: Clean local ssh config
+  vars:
+    cifmw_ssh_jumper_target: 'localhost'
+    cifmw_ssh_jumper_config_dir: "{{ lookup('env', 'HOME') }}/.ssh"
+  ansible.builtin.include_role:
+    name: "ssh_jumper"
+    tasks_from: "cleanup.yml"
+
+- name: Clean dnsmasq
+  ansible.builtin.import_role:
+    name: dnsmasq
+    tasks_from: cleanup.yml

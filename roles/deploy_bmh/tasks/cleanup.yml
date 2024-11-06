@@ -1,0 +1,39 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Get the BM manifests
+  ansible.builtin.find:
+    paths: "{{ cifmw_deploy_bmh_dest_dir }}"
+    patterns: "*.yml"
+  register: _bmh_manifests_find
+
+- name: Removing resources if deployed
+  when:
+    - cifmw_deploy_bmh_apply_cr
+  kubernetes.core.k8s:
+    kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+    api_key: "{{ cifmw_openshift_token | default(omit) }}"
+    context: "{{ cifmw_openshift_context | default(omit) }}"
+    state: absent
+    wait: true
+    src: "{{ item.path }}"
+  loop: "{{ _bmh_manifests_find.files | default([]) }}"
+
+- name: Delete CR files
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _bmh_manifests_find.files | default([]) }}"

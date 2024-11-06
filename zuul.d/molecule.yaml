@@ -1,0 +1,904 @@
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/artifacts/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-artifacts
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: artifacts
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/build_containers/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-build_containers
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: build_containers
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/build_openstack_packages/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    - ^roles/pkg_build/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+    - ^roles/repo_setup/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+    name: cifmw-molecule-build_openstack_packages
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: build_openstack_packages
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/build_push_container/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-build_push_container
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: build_push_container
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/cert_manager/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-cert_manager
+    nodeset: centos-9-crc-2-39-0-xxl
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: cert_manager
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/ci_gen_kustomize_values/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-ci_gen_kustomize_values
+    parent: cifmw-molecule-base
+    required-projects:
+    - openstack-k8s-operators/architecture
+    vars:
+      TEST_RUN: ci_gen_kustomize_values
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/ci_local_storage/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-ci_local_storage
+    nodeset: centos-9-crc-2-39-0-xl
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: ci_local_storage
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/ci_metallb/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-ci_metallb
+    parent: cifmw-molecule-base-crc
+    vars:
+      TEST_RUN: ci_metallb
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/ci_multus/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-ci_multus
+    parent: cifmw-molecule-base-crc
+    vars:
+      TEST_RUN: ci_multus
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/ci_netconfig/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-ci_netconfig
+    parent: cifmw-molecule-base-crc
+    vars:
+      TEST_RUN: ci_netconfig
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/ci_network/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-ci_network
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: ci_network
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/ci_nmstate/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-ci_nmstate
+    parent: cifmw-molecule-base-crc
+    vars:
+      TEST_RUN: ci_nmstate
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/ci_setup/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-ci_setup
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: ci_setup
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/cifmw_block_device/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-cifmw_block_device
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: cifmw_block_device
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/cifmw_ceph_client/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-cifmw_ceph_client
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: cifmw_ceph_client
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/cifmw_ceph_spec/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-cifmw_ceph_spec
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: cifmw_ceph_spec
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/cifmw_cephadm/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-cifmw_cephadm
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: cifmw_cephadm
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/cifmw_create_admin/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-cifmw_create_admin
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: cifmw_create_admin
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/cifmw_test_role/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-cifmw_test_role
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: cifmw_test_role
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/compliance/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-compliance
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: compliance
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/config_drive/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-config_drive
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: config_drive
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/copy_container/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-copy_container
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: copy_container
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/deploy_bmh/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-deploy_bmh
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: deploy_bmh
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/devscripts/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-devscripts
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: devscripts
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/discover_latest_image/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-discover_latest_image
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: discover_latest_image
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/dlrn_promote/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-dlrn_promote
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: dlrn_promote
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/dlrn_report/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-dlrn_report
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: dlrn_report
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/dnsmasq/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-dnsmasq
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: dnsmasq
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/edpm_build_images/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-edpm_build_images
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: edpm_build_images
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/edpm_deploy/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-edpm_deploy
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: edpm_deploy
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/edpm_deploy_baremetal/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-edpm_deploy_baremetal
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: edpm_deploy_baremetal
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/edpm_kustomize/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-edpm_kustomize
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: edpm_kustomize
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/edpm_prepare/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-edpm_prepare
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: edpm_prepare
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/env_op_images/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-env_op_images
+    nodeset: centos-9-crc-2-39-0-xl
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: env_op_images
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/hci_prepare/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-hci_prepare
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: hci_prepare
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/hive/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-hive
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: hive
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/idrac_configuration/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-idrac_configuration
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: idrac_configuration
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/install_ca/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-install_ca
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: install_ca
+- job:
+    extra-vars:
+      crc_parameters: --memory 29000 --disk-size 100 --cpus 8
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/install_openstack_ca/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-install_openstack_ca
+    nodeset: centos-9-crc-2-39-0-3xl
+    parent: cifmw-molecule-base-crc
+    timeout: 5400
+    vars:
+      TEST_RUN: install_openstack_ca
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/install_yamls/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-install_yamls
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: install_yamls
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/kustomize_deploy/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-kustomize_deploy
+    parent: cifmw-molecule-base
+    required-projects:
+    - openstack-k8s-operators/architecture
+    vars:
+      TEST_RUN: kustomize_deploy
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/libvirt_manager/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    - ^roles/dnsmasq/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+    - ^roles/networking_mapper/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+    - ^roles/config_drive/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    name: cifmw-molecule-libvirt_manager
+    parent: cifmw-molecule-base
+    timeout: 3600
+    vars:
+      TEST_RUN: libvirt_manager
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/manage_secrets/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-manage_secrets
+    nodeset: centos-9-crc-2-39-0-xl
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: manage_secrets
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/mirror_registry/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-mirror_registry
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: mirror_registry
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/nat64_appliance/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-nat64_appliance
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: nat64_appliance
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/networking_mapper/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-networking_mapper
+    nodeset: 4x-centos-9-medium
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: networking_mapper
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/openshift_login/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-openshift_login
+    nodeset: centos-9-crc-2-39-0-xl
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: openshift_login
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/openshift_obs/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-openshift_obs
+    nodeset: centos-9-crc-2-39-0-xxl
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: openshift_obs
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/openshift_provisioner_node/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-openshift_provisioner_node
+    nodeset: centos-9-crc-2-39-0-xl
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: openshift_provisioner_node
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/openshift_setup/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-openshift_setup
+    nodeset: centos-9-crc-2-39-0-xl
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: openshift_setup
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/operator_build/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-operator_build
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: operator_build
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/operator_deploy/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-operator_deploy
+    nodeset: centos-9-crc-2-39-0-xl
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: operator_deploy
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/os_must_gather/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-os_must_gather
+    parent: cifmw-molecule-base-crc
+    vars:
+      TEST_RUN: os_must_gather
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/os_net_setup/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-os_net_setup
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: os_net_setup
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/pkg_build/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-pkg_build
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: pkg_build
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/podman/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-podman
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: podman
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/registry_deploy/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-registry_deploy
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: registry_deploy
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/repo_setup/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-repo_setup
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: repo_setup
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/reportportal/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-reportportal
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: reportportal
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/reproducer/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    - ^roles/dnsmasq/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+    - ^roles/libvirt_manager/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+    - ^roles/networking_mapper/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+    - ^roles/podman/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+    - ^roles/sushy_emulator/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+    - ^roles/rhol_crc/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+    name: cifmw-molecule-reproducer
+    nodeset: centos-9-crc-2-39-0-xxl
+    parent: cifmw-molecule-base
+    timeout: 5400
+    vars:
+      TEST_RUN: reproducer
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/rhol_crc/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-rhol_crc
+    nodeset: centos-9-crc-2-39-0-xxl
+    parent: cifmw-molecule-base
+    timeout: 5400
+    vars:
+      TEST_RUN: rhol_crc
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/run_hook/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-run_hook
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: run_hook
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/set_openstack_containers/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-set_openstack_containers
+    parent: cifmw-molecule-base-crc
+    vars:
+      TEST_RUN: set_openstack_containers
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/shiftstack/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-shiftstack
+    nodeset: centos-9-crc-2-39-0-xl
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: shiftstack
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/ssh_jumper/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-ssh_jumper
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: ssh_jumper
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/sushy_emulator/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-sushy_emulator
+    nodeset: centos-9-crc-2-39-0-xl
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: sushy_emulator
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/tempest/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-tempest
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: tempest
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/test_deps/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-test_deps
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: test_deps
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/test_operator/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-test_operator
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: test_operator
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/tofu/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-tofu
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: tofu
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/update/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-update
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: update
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/update_containers/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-update_containers
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: update_containers
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/validations/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-validations
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: validations
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/virtualbmc/(defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars).*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-virtualbmc
+    parent: cifmw-molecule-base
+    vars:
+      TEST_RUN: virtualbmc
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/ci_lvms_storage/defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars.*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-ci_lvms_storage
+    parent: cifmw-molecule-noop
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/cifmw_external_dns/defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars.*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-cifmw_external_dns
+    parent: cifmw-molecule-noop
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/openshift_adm/defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars.*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-openshift_adm
+    parent: cifmw-molecule-noop
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/ovirt/defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars.*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-ovirt
+    parent: cifmw-molecule-noop
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/polarion/defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars.*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-polarion
+    parent: cifmw-molecule-noop
+- job:
+    files:
+    - ^common-requirements.txt
+    - ^test-requirements.txt
+    - ^roles/switch_config/defaults|files|handlers|library|lookup_plugins|module_utils|molecule|tasks|templates|vars.*
+    - ^ci/playbooks/molecule.*
+    - ^.config/molecule/.*
+    name: cifmw-molecule-switch_config
+    parent: cifmw-molecule-noop

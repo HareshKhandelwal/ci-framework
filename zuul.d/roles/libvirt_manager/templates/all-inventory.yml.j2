@@ -1,0 +1,26 @@
+all:
+  children:
+{% for vm in _cifmw_libvirt_manager_layout.vms.keys() if
+    (_cifmw_libvirt_manager_layout.vms[vm].manage | default(true) and
+     _cifmw_libvirt_manager_layout.vms[vm].amount | default(1) | int > 0) %}
+    {{ (vm == 'crc') | ternary('ocp', vm) }}s:
+      vars:
+{% if _cifmw_libvirt_manager_layout.vms[vm].target is defined %}
+{% set _target = _cifmw_libvirt_manager_layout.vms[vm].target %}
+{% set _hostname = hostvars[_target]['ansible_host'] | default(hostvars[_target]['inventory_hostname']) %}
+{#
+Here we set ssh options to consume the right private key (one per hypervisor), as well as
+the right hypervisor depending on the virtual machine.
+Note that none of the options such as StrictHostKeyChecking nor the
+identity file will be applied to the ProxyHost (-J option value), meaning
+we have to push some ssh configuration on the controller-0 to properly connect to the various
+virtual machines.
+#}
+        ansible_ssh_private_key_file: "~/.ssh/ssh_{{ _hostname }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -J {{ ansible_user | default(ansible_user_id) }}@{{ _hostname }}"
+{% endif %}
+{% endfor %}
+localhosts:
+  hosts:
+    localhost:
+      ansible_connection: local

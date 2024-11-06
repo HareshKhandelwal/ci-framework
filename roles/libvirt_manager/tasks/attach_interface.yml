@@ -1,0 +1,106 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+# This task requires
+#   vm_name         Domain name to which the interface needs to be attached.
+#   network
+#     name          Name of the network
+
+- name: Get existing networks and bridges
+  block:
+    - name: Get virtual network information
+      register: _net_info
+      community.libvirt.virt_net:
+        command: "info"
+        uri: "qemu:///system"
+
+    - name: Create network to bridge mapping
+      vars:
+        _local_map: "{{ {net.key: net.value.bridge} }}"
+      ansible.builtin.set_fact:
+        _net_bridge_map: >-
+          {{
+            _net_bridge_map | default({}) |
+            combine(_local_map, recursive=true)
+          }}
+      loop: "{{ _net_info.networks | dict2items }}"
+      loop_control:
+        loop_var: net
+        label: "{{ net.key }}"
+
+- name: "Check ports attached to the domain {{ vm_name }}"
+  block:
+    - name: Dump domain xml
+      register: _domain_xml
+      community.libvirt.virt:
+        command: "get_xml"
+        name: "{{ vm_name }}"
+        uri: "qemu:///system"
+
+    - name: Extract networks from XML
+      register: _extracted_xml
+      failed_when: false
+      community.general.xml:
+        xmlstring: "{{ _domain_xml.get_xml }}"
+        xpath: "/domain/devices/interface/source"
+        content: "attribute"
+
+- name: "Attach interface {{ network.name }} on {{ vm_name }}"  # noqa: name[template]
+  vars:
+    _net_name: >-
+      {{
+        (cifmw_libvirt_manager_net_prefix_add | bool) |
+        ternary('cifmw-' + network.name, network.name)
+      }}
+    # ensure we're using bridge name
+    _local_bridge_name: >-
+      {{
+        (_net_name not in _net_bridge_map.keys()) |
+        ternary(_net_name, _net_bridge_map[_net_name])
+      }}
+    _type: "{{ cifmw_libvirt_manager_network_interface_types[network.name] | default('bridge') }}"
+    _attached_bridges: >-
+      {{
+        _extracted_xml.matches | default([]) |
+        selectattr('source.' + _type, 'defined') |
+        selectattr('source.' + _type, 'equalto', _local_bridge_name)
+      }}
+    _clean_vm: "{{ vm_name | replace('cifmw-', '') }}"
+    _mac_seed: "{{ '52:54:%02i' % vm_item|default(0)|int }}"
+    _lm_mac_address: >-
+      {% if cifmw_libvirt_manager_mac_map[_clean_vm] is defined -%}
+      {% set known_mac = cifmw_libvirt_manager_mac_map[_clean_vm] |
+                         selectattr('network', 'equalto', network.name) |
+                         map(attribute='mac')
+      -%}
+      {% endif -%}
+      {% if known_mac is defined and known_mac | length > 0 -%}
+      {{  known_mac | first }}
+      {% else -%}
+      {{  _mac_seed | community.general.random_mac }}
+      {% endif -%}
+  when:
+    - _attached_bridges | length == 0
+  ansible.builtin.command:
+    cmd: >-
+      virsh -c qemu:///system
+      attach-interface "{{ vm_name }}"
+      --source "{{ _local_bridge_name }}"
+      --type "{{ _type }}"
+      --mac "{{ _lm_mac_address }}"
+      --model virtio
+      --config
+      --persistent

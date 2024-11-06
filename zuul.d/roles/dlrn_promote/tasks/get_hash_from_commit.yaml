@@ -1,0 +1,49 @@
+---
+- name: Get commit.yaml file
+  ansible.builtin.get_url:
+    url: "{{ commit_url }}/commit.yaml"
+    dest: "{{ cifmw_dlrn_promote_workspace }}/commit.yaml"
+    force: true
+  register: result
+  until:
+    - result.status_code is defined
+    - result.status_code == 200
+  retries: 6
+  delay: 50
+
+- name: Load data from commit.yaml file
+  ansible.builtin.slurp:
+    path: "{{ cifmw_dlrn_promote_workspace }}/commit.yaml"
+  register: _commit_data
+
+- name: Filter slurp data from commit.yaml
+  ansible.builtin.set_fact:
+    _hashes: "{{ _commit_data['content'] | b64decode | from_yaml }}"
+
+- name: Get individual commit/distro hashes
+  ansible.builtin.set_fact:
+    cifmw_dlrn_promote_distro_hash: "{{ _hashes['commits'][0]['distro_hash'] }}"
+    cifmw_dlrn_promote_commit_hash: "{{ _hashes['commits'][0]['commit_hash'] }}"
+    cifmw_dlrn_promote_full_hash: "{{ _hashes['commits'][0]['commit_hash'] }}_{{ _hashes['commits'][0]['distro_hash'][:8] }}"
+
+- name: Get individual extended hash - if it is not None
+  ansible.builtin.set_fact:
+    cifmw_dlrn_promote_extended_hash: "{{ _hashes['commits'][0]['extended_hash'] }}"
+  when: _hashes['commits'][0]['extended_hash'] != 'None'
+
+- name: Add extended_hash to full_hash if defined
+  ansible.builtin.set_fact:
+    cifmw_dlrn_promote_full_hash: "{{ cifmw_dlrn_promote_full_hash }}_{{ cifmw_dlrn_promote_extended_hash.split('_')[0][:8] }}_{{ cifmw_dlrn_promote_extended_hash.split('_')[1][:8] }}"
+  when: cifmw_dlrn_promote_extended_hash is defined
+
+- name: Print hash infos
+  ansible.builtin.debug:
+    msg:
+      - "Commit Hash: {{ cifmw_dlrn_promote_commit_hash }}"
+      - "Distro Hash: {{ cifmw_dlrn_promote_distro_hash }}"
+      - "Extended Hash: {{ cifmw_dlrn_promote_extended_hash | default('') }}"
+      - "Full Hash: {{ cifmw_dlrn_promote_full_hash }}"
+
+- name: Run promotion
+  ansible.builtin.include_tasks: promote_hash.yml
+  when: cifmw_dlrn_promote_hash_promote_content | bool

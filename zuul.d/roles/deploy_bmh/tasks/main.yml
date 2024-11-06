@@ -1,0 +1,104 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Load baremetal hosts information from file
+  when:
+    - cifmw_deploy_bmh_parameters_file is file
+    - cifmw_baremetal_hosts is not defined
+  ansible.builtin.include_vars:
+    file: "{{ cifmw_deploy_bmh_parameters_file }}"
+
+- name: Set baremetal hosts facts
+  ansible.builtin.set_fact:
+    cifmw_deploy_bmh_bm_hosts: >-
+      {{
+        cifmw_baremetal_hosts | default({}) | dict2items |
+        rejectattr('key', 'in', ['crc', 'controller', 'ocp']) |
+        items2dict
+      }}
+
+- name: Generate CRs
+  when:
+    - cifmw_deploy_bmh_bm_hosts | length > 0
+  block:
+    - name: Create destination directory
+      ansible.builtin.file:
+        path: "{{ cifmw_deploy_bmh_dest_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Build and create Secret CRs
+      vars:
+        node_name: "{{ item.key }}"
+        node_data: "{{ item.value }}"
+        _credentials_content: >-
+          {{
+            lookup('file', item.value['credentials_file']) | from_yaml
+            if 'credentials_file' in item.value else {}
+          }}
+        node_user: >-
+          {{
+            item.value['username'] if 'username' in item.value else _credentials_content['username']
+          }}
+        node_password: >-
+          {{
+            item.value['password'] if 'password' in item.value else _credentials_content['password']
+          }}
+        template_name: "bmh-secret"
+        manifest_patch: >-
+          {{
+            cifmw_deploy_bmh_patch_secret | default({}) |
+            combine(cifmw_deploy_bmh_node_patch_secret[node_name] | default({}), recursive=true)
+          }}
+      ansible.builtin.include_tasks:
+        file: "create_templated_resource.yml"
+      loop: "{{ cifmw_deploy_bmh_bm_hosts | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Build and create BMH Netconfig Secrets
+      vars:
+        node_name: "{{ item.key }}"
+        node_data: "{{ item.value }}"
+        node_nmstate: "{{ item.value.nmstate }}"
+        template_name: "bmh-nmstate"
+        manifest_patch: >-
+          {{
+            cifmw_deploy_bmh_patch_nmstate | default({}) |
+            combine(cifmw_deploy_bmh_node_patch_nmstate[node_name] | default({}), recursive=true)
+          }}
+      when: "'nmstate' in item.value"
+      ansible.builtin.include_tasks:
+        file: "create_templated_resource.yml"
+      loop: "{{ cifmw_deploy_bmh_bm_hosts | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Build and create BMH CRs
+      vars:
+        node_name: "{{ item.key }}"
+        node_data: "{{ item.value }}"
+        template_name: "bmh"
+        manifest_patch: >-
+          {{
+            cifmw_deploy_bmh_patch | default({}) |
+            combine(cifmw_deploy_bmh_node_patch[node_name] | default({}), recursive=true)
+          }}
+      ansible.builtin.include_tasks:
+        file: "create_templated_resource.yml"
+      loop: "{{ cifmw_deploy_bmh_bm_hosts | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"

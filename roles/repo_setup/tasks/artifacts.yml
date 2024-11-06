@@ -1,0 +1,63 @@
+---
+- name: Run repo-setup-get-hash
+  ansible.builtin.command:
+    cmd: >-
+      {{ cifmw_repo_setup_basedir }}/venv/bin/repo-setup-get-hash
+      --dlrn-url {{ cifmw_repo_setup_dlrn_uri[:-1] }}
+      --os-version {{ cifmw_repo_setup_os_release }}{{ cifmw_repo_setup_dist_major_version }}
+      --release {{ cifmw_repo_setup_branch }}
+      {% if cifmw_repo_setup_component_name | length > 0 -%}
+      --component {{ cifmw_repo_setup_component_name }}
+      --tag {{ cifmw_repo_setup_component_promotion_tag }}
+      {% else -%}
+      --tag {{cifmw_repo_setup_promotion }}
+      {% endif -%}
+      {% if (cifmw_repo_setup_dlrn_hash_tag | length > 0) and (cifmw_repo_setup_component_name | length <= 0) -%}
+      --dlrn-hash-tag {{ cifmw_repo_setup_dlrn_hash_tag }}
+      {% endif -%}
+      --json
+  environment: "{{ cifmw_repo_setup_env | default({}) }}"
+  register: _get_hash
+
+- name: Save repo-setup hash content
+  vars:
+    _repo_setup_json: "{{ _get_hash.stdout | from_json }}"
+  block:
+    - name: Dump full hash in delorean.repo.md5 file
+      when: cifmw_repo_setup_component_name | length == 0
+      ansible.builtin.copy:
+        content: |
+          {{ _repo_setup_json['full_hash'] }}
+        dest: "{{ cifmw_repo_setup_basedir }}/artifacts/repositories/delorean.repo.md5"
+        mode: "0644"
+
+    - name: Dump current-podified hash when using with component repo
+      when: cifmw_repo_setup_component_name | length > 0
+      block:
+        - name: Dump current-podified hash
+          ansible.builtin.get_url:
+            url: "{{ cifmw_repo_setup_dlrn_uri }}/{{ cifmw_repo_setup_os_release }}{{ cifmw_repo_setup_dist_major_version }}-{{ cifmw_repo_setup_branch }}/current-podified/delorean.repo.md5"
+            dest: "{{ cifmw_repo_setup_basedir }}/artifacts/repositories/delorean.repo.md5"
+            mode: "0644"
+
+        - name: Slurp current podified hash
+          ansible.builtin.slurp:
+            src: "{{ cifmw_repo_setup_basedir }}/artifacts/repositories/delorean.repo.md5"
+          register: _current_podified_hash
+
+        - name: Update the value of full_hash
+          vars:
+            _hash: "{{ _current_podified_hash['content'] | b64decode | trim }}"
+          ansible.builtin.set_fact:
+            _repo_setup_json: "{{ _repo_setup_json | combine({'full_hash': _hash}, recursive=true) }}"
+
+    - name: Export hashes facts for further use
+      ansible.builtin.set_fact:
+        cifmw_repo_setup_full_hash: "{{ _repo_setup_json['full_hash'] }}"
+        cifmw_repo_setup_commit_hash: "{{ _repo_setup_json['commit_hash'] }}"
+        cifmw_repo_setup_distro_hash: "{{ _repo_setup_json['distro_hash'] }}"
+        cifmw_repo_setup_extended_hash: "{{ _repo_setup_json['extended_hash'] }}"
+        cifmw_repo_setup_dlrn_api_url: "{{ _repo_setup_json['dlrn_api_url'] }}"
+        cifmw_repo_setup_dlrn_url: "{{ _repo_setup_json['dlrn_url'] }}"
+        cifmw_repo_setup_release: "{{ _repo_setup_json['release'] }}"
+        cacheable: true

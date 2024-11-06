@@ -1,0 +1,193 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+
+- name: Converge
+  hosts: all
+  vars:
+    cifmw_networking_mapper_infra_dir: >-
+      {{ (ansible_user_dir,
+          'ci-framework-data',
+          'artifacts',
+          'network-mapper') | path_join
+      }}
+    cifmw_networking_mapper_networking_def_path: >-
+      {{ cifmw_networking_mapper_infra_dir }}/networking-definition.yml
+    cifmw_networking_mapper_networking_env_def_path: >-
+      {{
+        (cifmw_networking_mapper_infra_dir,
+         'networking-environment-definition.yml') | path_join
+      }}
+  tasks:
+    - name: Load testing input
+      ansible.builtin.include_vars:
+        file: input.yml
+        name: _testing_net_def
+
+    - name: Call the networking mapper partial map
+      vars:
+        cifmw_networking_definition: "{{ _testing_net_def }}"
+      ansible.builtin.include_role:
+        name: networking_mapper
+
+    - name: Slurp the Networking Definition content
+      ansible.builtin.slurp:
+        path: "{{ cifmw_networking_mapper_networking_def_path }}"
+      register: _net_def_slurp
+
+    - name: Assert the Networking Definition file content
+      vars:
+        _content: >-
+          {{
+            _net_def_slurp.content |
+            b64decode |
+            from_yaml
+          }}
+        _expected_content: >-
+          {{
+            _testing_net_def |
+            combine(cifmw_networking_mapper_definition_patch_01, recursive=True)
+          }}
+      ansible.builtin.assert:
+        that: _content == _expected_content
+
+    - name: Slurp Zuul inventory
+      ansible.builtin.slurp:
+        path: "{{ ansible_user_dir }}/ci-framework-data/artifacts/zuul_inventory.yml"
+      register: _zuul_inventory_slurp
+
+    - name: Set common facts
+      vars:
+        _zuul_inventory_content: >-
+          {{
+            _zuul_inventory_slurp.content |
+            b64decode |
+            from_yaml
+          }}
+      ansible.builtin.set_fact:
+        _inventory_content: "{{ _zuul_inventory_content }}"
+        _inventory_host_items: >-
+          {{
+            _zuul_inventory_content.all.hosts |
+            dict2items |
+            selectattr("value.ansible_connection", "defined") |
+            selectattr("value.ansible_connection", "equalto", "ssh")
+          }}
+        _ifaces_info_net: "test-network"
+
+    - name: Add Zuul hosts
+      vars:
+        hosts_groups: >-
+          {% set _groups = {} -%}
+          {% for name, content in (_inventory_content.all.children | default([])).items() -%}
+          {%   for host_name in content.hosts | default([]) -%}
+          {%     set _ = _groups.update({host_name: (_groups[host_name] | default([])) + [name] }) -%}
+          {%   endfor -%}
+          {% endfor -%}
+          {{ _groups }}
+      ansible.builtin.add_host:
+        name: '{{ item.key }}'
+        ansible_ssh_host: "{{ item.value.ansible_host }}"
+        ansible_ssh_port: "{{ item.value.ansible_port }}"
+        ansible_ssh_user: "{{ item.value.ansible_user }}"
+        ansible_ssh_private_key_file: "{{ ansible_user_dir }}/.ssh/id_rsa"
+        groups: "{{ hosts_groups[item.key] | default([]) }}"
+      loop: "{{ _inventory_host_items }}"
+
+    - name: Fetch net facts to further build the testing interfaces_info
+      ansible.builtin.setup:
+        gather_subset:
+          - network
+      delegate_to: "{{ item.key }}"
+      delegate_facts: true
+      loop: "{{ _inventory_host_items }}"
+
+    - name: Build interfaces_info
+      vars:
+        _host_default_ipv4: "{{ hostvars[item.key]['ansible_default_ipv4'] }}"
+        _host_iface_content:
+          ip: "{{ _host_default_ipv4.address }}"
+          mac: "{{ _host_default_ipv4.macaddress }}"
+          network: "{{ _ifaces_info_net }}"
+      ansible.builtin.set_fact:
+        _interfaces_info_content: >-
+          {{
+            _interfaces_info_content |
+            default({}) |
+            combine(
+              {
+                item.key: [
+                    _host_iface_content
+                  ]
+              }
+            )
+          }}
+      loop: "{{ _inventory_host_items }}"
+
+    - name: Call the networking mapper full map
+      vars:
+        cifmw_networking_definition: "{{ _testing_net_def }}"
+        cifmw_networking_mapper_ifaces_info: "{{ _interfaces_info_content }}"
+      ansible.builtin.include_role:
+        name: networking_mapper
+
+    - name: Stat to check for Networking Env Definition file existence
+      ansible.builtin.slurp:
+        path: "{{ cifmw_networking_mapper_networking_env_def_path }}"
+      register: _net_env_def_slurp
+
+    - name: Assert the Networking Env Definition file content
+      vars:
+        _content: >-
+          {{
+            _net_env_def_slurp.content |
+            b64decode |
+            from_yaml
+          }}
+      ansible.builtin.assert:
+        that:
+          - "_content.instances is defined"
+          - "_content.networks is defined"
+          - >-
+            "
+              (
+                content.networks.keys() | list | sort
+              ) ==
+              (
+                _testing_net_def.keys() | list | sort
+              )
+            "
+          - >-
+            "
+              (
+                _content.instances.keys() | sort
+              ) ==
+              (
+                _inventory_host_items | map(attribute='key') | list | sort
+              )
+            "
+
+    - name: Assert that the internalapi patch has been applied
+      vars:
+        _content: >-
+          {{
+            _net_env_def_slurp.content |
+            b64decode |
+            from_yaml
+          }}
+      ansible.builtin.assert:
+        that:
+          - "_content.networks['internalapi'].vlan_id == 100"

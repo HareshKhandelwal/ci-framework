@@ -1,0 +1,66 @@
+---
+# Copyright 2023 Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Cleanup
+  hosts: instance
+  gather_facts: true
+  vars:
+    cifmw_basedir: "/opt/basedir"
+    molecule_scenario: deploy_layout
+  tasks:
+    - name: Ensure we have the destination directory
+      failed_when: false
+      ansible.builtin.file:
+        path: >-
+          {{
+            [ansible_user_dir,
+            'ci-framework-data',
+            'artifacts',
+            molecule_scenario] | path_join
+          }}
+        state: directory
+        mode: "0755"
+
+    - name: Copy generated content to proper location
+      failed_when: false
+      ansible.posix.synchronize:
+        src: "{{ item }}"
+        dest: >-
+          {{
+            [ansible_user_dir,
+            'ci-framework-data',
+            'artifacts',
+            molecule_scenario] | path_join
+          }}
+      loop:
+        - "{{ cifmw_basedir }}/artifacts"
+        - "{{ cifmw_basedir }}/logs"
+        - "{{ cifmw_basedir }}/cifmw_config_drive"
+        - "/etc/cifmw-dnsmasq.conf"
+        - "/etc/cifmw-dnsmasq.d"
+
+    - name: Clean layout
+      vars:
+        deepscrub: true
+      ansible.builtin.import_role:
+        name: libvirt_manager
+        tasks_from: clean_layout.yml
+
+    - name: Ensure work directory is removed
+      become: true
+      ansible.builtin.file:
+        path: "{{ cifmw_basedir }}"
+        state: absent

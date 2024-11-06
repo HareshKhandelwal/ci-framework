@@ -1,0 +1,103 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Ensure needed directories exist
+  ansible.builtin.file:
+    path: "{{ item.key }}"
+    state: directory
+    mode: "{{ item.mode | default('0755') }}"
+  loop:
+    - key: "{{ cifmw_virtualbmc_sshkey_path | dirname }}"
+      mode: "0700"
+
+- name: Install podman and configure session linger
+  ansible.builtin.import_role:
+    name: podman
+
+- name: Check if container already exists
+  register: _vbmc_container_info
+  containers.podman.podman_container_info:
+    name: "{{ cifmw_virtualbmc_container_name }}"
+
+- name: Run tasks only if container does not exist
+  when:
+    - _vbmc_container_info.containers | length == 0
+  vars:
+    dest_dir: "{{ cifmw_virtualbmc_sshkey_path | dirname }}"
+  block:
+    - name: Create ssh key for VBMC
+      register: _vbmc_key
+      community.crypto.openssh_keypair:
+        path: "{{ cifmw_virtualbmc_sshkey_path }}"
+        type: "{{ cifmw_virtualbmc_sshkey_type }}"
+        size: "{{ cifmw_virtualbmc_sshkey_size }}"
+        regenerate: full_idempotence
+
+    - name: Pull vbmc container image
+      containers.podman.podman_image:
+        name: "{{ cifmw_virtualbmc_image }}"
+        state: present
+
+    - name: Allow VBMC temporary key
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user_id }}"
+        key: "{{ _vbmc_key.public_key }}"
+        state: present
+
+    - name: Create ssh_config snippet for VBMC
+      ansible.builtin.copy:
+        dest: "{{ dest_dir }}/vbmc_ssh_config.conf"
+        mode: "0644"
+        content: |
+          Host *
+            # Avoid trying gssapi, it takes too long and
+            # leads to vbmcd timeout
+            GSSAPIAuthentication no
+
+    - name: Create vbmc server configuration file
+      ansible.builtin.copy:
+        dest: "{{ dest_dir }}/virtualbmc.conf"
+        content: |
+          [default]
+          server_port={{ cifmw_virtualbmc_daemon_port }}
+        mode: "0644"
+
+    - name: Create undying vbmcd service script
+      ansible.builtin.copy:
+        dest: "{{ dest_dir }}/vbmcd.sh"
+        content: |-
+          #!/bin/sh
+          while true; do
+            /usr/local/bin/vbmcd --foreground;
+            echo "Dying... restarting vbmcd"
+            sleep 1;
+          done
+        mode: "0755"
+
+- name: Create and start vbmc container
+  vars:
+    dest_dir: "{{ cifmw_virtualbmc_sshkey_path | dirname }}"
+  containers.podman.podman_container:
+    image: "{{ cifmw_virtualbmc_image }}"
+    name: "{{ cifmw_virtualbmc_container_name }}"
+    network: host
+    state: started
+    command: "/vbmcd.sh"
+    volumes:
+      - "{{ cifmw_virtualbmc_sshkey_path }}:{{ cifmw_virtualbmc_ipmi_key_path }}:ro,Z"
+      - "{{ dest_dir }}/virtualbmc.conf:/etc/virtualbmc/virtualbmc.conf:ro,Z"
+      - "{{ dest_dir }}/vbmc_ssh_config.conf:/etc/ssh/ssh_config.d/zzz-gssapi.conf:ro,Z"
+      - "{{ dest_dir }}/vbmcd.sh:/vbmcd.sh:ro,Z"

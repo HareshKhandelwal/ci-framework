@@ -1,0 +1,11 @@
+---
+- name: Restart nova hook
+  hosts: "{{ cifmw_target_hook_host | default('localhost') }}"
+  gather_facts: false
+  tasks:
+    - name: Restart nova-scheduler to pick up cell1
+      environment:
+        KUBECONFIG: "{{ cifmw_openshift_kubeconfig }}"
+        PATH: "{{ cifmw_path }}"
+      ansible.builtin.command: >-
+        oc delete pod -n {{ namespace }} -l service=nova-scheduler

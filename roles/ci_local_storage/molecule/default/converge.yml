@@ -1,0 +1,135 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Converge
+  hosts: all
+  vars:
+    cifmw_path: "{{ ansible_user_dir }}/.crc/bin:{{ ansible_user_dir }}/.crc/bin/oc:{{ ansible_user_dir }}/bin:{{ ansible_env.PATH }}"
+    cifmw_openshift_kubeconfig: "{{ ansible_user_dir }}/.crc/machines/crc/kubeconfig"
+    cifmw_cls_storage_provisioner: crc-devsetup
+    cifmw_cls_storage_class: molecule-storage
+    cifmw_cls_pv_count: 10
+    cifmw_cls_namespace: openstack
+    cifmw_cls_storage_capacity: 100Mi
+    cifmw_cls_local_storage_name: /mnt/openstack
+  tasks:
+    - name: Add the crc host dynamically
+      ansible.builtin.add_host:
+        name: crc
+        ansible_ssh_private_key_file: "{{ ansible_user_dir }}/.crc/machines/crc/id_ecdsa"
+        ansible_ssh_user: core
+
+    - name: Run ci_local_storage role
+      ansible.builtin.include_role:
+        name: ci_local_storage
+
+    - name: Ensure directories are created
+      block:
+        - name: Not create directories on crc
+          delegate_to: crc
+          become: true
+          register: _check_files
+          ansible.builtin.file:
+            path: >-
+              {{
+                [
+                  cifmw_cls_local_storage_name,
+                  'pv'+ ("%02d" | format(item | int))
+                ] | path_join
+              }}
+            state: directory
+            mode: "0775"
+          loop: "{{ range(1, cifmw_cls_pv_count+1) }}"
+
+        - name: Fail if we have a change  # noqa: no-handler
+          when:
+            - _check_files is changed
+          ansible.builtin.fail:
+            msg: "{{ _check_files.results | to_nice_yaml }}"
+
+    - name: Get all pvs
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+        api_key: "{{ cifmw_openshift_token | default(omit)}}"
+        context: "{{ cifmw_openshift_context | default(omit)}}"
+        kind: PersistentVolume
+        label_selectors:
+          - provisioned-by={{ cifmw_cls_storage_provisioner }}
+      register: _pv_info
+
+    - name: Assert that we created the wanted number of pvs
+      ansible.builtin.assert:
+        that: "_pv_info.resources | length | int == cifmw_cls_pv_count | int"
+
+    - name: Gather names from pvs
+      ansible.builtin.set_fact:
+        _pv_names: "{{ _pv_info.resources | selectattr('metadata.name', 'defined') | map(attribute='metadata.name') }}"
+
+    - name: Gather computed PV names
+      ansible.builtin.set_fact:
+        _generated_names: "{{ _generated_names | default([]) + [ cifmw_cls_storage_class ~ '%02d' | format(item) ~ '-' ~ cifmw_ci_local_storage_k8s_hostnames[0] ] }}"
+      loop: "{{ range(1, cifmw_cls_pv_count + 1) | list }}"
+
+    - name: Assert that the pvs names are correct
+      ansible.builtin.assert:
+        that: "item.0 == item.1"
+      loop: "{{ _pv_names | zip(_generated_names) | list }}"
+
+    - name: Gather mountpoints from pvs
+      ansible.builtin.set_fact:
+        _pv_mountpoint: "{{ _pv_info.resources | selectattr('spec.local.path', 'defined') | map(attribute='spec.local.path') }}"
+
+    - name: Gather computed mountpoints
+      ansible.builtin.set_fact:
+        _generated_mountpoint: "{{ _generated_mountpoint | default([]) + [ cifmw_cls_local_storage_name ~ '/pv' ~ '%02d' | format(item) ] }}"
+      loop: "{{ range(1, cifmw_cls_pv_count + 1) | list }}"
+
+    - name: Assert that the mountpoints in the pv are correct
+      ansible.builtin.assert:
+        that: "item.0 == item.1"
+      loop: "{{ _pv_mountpoint | zip(_generated_mountpoint) | list }}"
+
+    - name: Assert that the storage class is correct
+      ansible.builtin.assert:
+        that: "item == cifmw_cls_storage_class"
+      loop: "{{ _pv_info.resources | selectattr('spec.storageClassName', 'defined') | map(attribute='spec.storageClassName') }}"
+
+    - name: Assert that the storage capacity is correct
+      ansible.builtin.assert:
+        that: "item == cifmw_cls_storage_capacity"
+      loop: "{{ _pv_info.resources | selectattr('spec.capacity.storage', 'defined') | map(attribute='spec.capacity.storage') }}"
+
+    - name: Delete the created pvs
+      ansible.builtin.include_role:
+        name: ci_local_storage
+        tasks_from: cleanup.yml
+
+    - name: Get all namespaces
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ cifmw_openshift_kubeconfig }}"
+        kind: Namespace
+      register: _ns
+
+    - name: Assert that the cifmw_cls_namespace ns is deleted
+      vars:
+        ns_names: >-
+          {{
+            _ns.resources |
+            default([]) |
+            map(attribute='metadata.name')
+          }}
+      ansible.builtin.assert:
+        that: "cifmw_cls_namespace not in ns_names"

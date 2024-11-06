@@ -1,0 +1,31 @@
+---
+# All variables intended for modification should be placed in this file.
+# All variables within this role should have a prefix of "cifmw_os_net_setup"
+cifmw_os_net_setup_config:
+  - name: public
+    external: true
+    shared: false
+    is_default: true
+    provider_network_type: flat
+    provider_physical_network: datacentre
+    subnets:
+      - name: public_subnet
+        cidr: 192.168.122.0/24
+        allocation_pool_start: 192.168.122.171
+        allocation_pool_end: 192.168.122.250
+        gateway_ip: 192.168.122.1
+        enable_dhcp: true
+
+cifmw_os_net_subnetpool_config:
+  - name: shared-pool-ipv4
+    default_prefix_length: 26
+    prefixes: '10.1.0.0/20'
+    is_default: true
+    is_shared: true
+  - name: shared-pool-ipv6
+    default_prefix_length: 64
+    prefixes: 'fdfe:381f:8400::/56'
+    is_default: true
+    is_shared: true
+
+cifmw_os_net_setup_dry_run: false

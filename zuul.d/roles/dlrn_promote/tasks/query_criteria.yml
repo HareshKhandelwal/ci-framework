@@ -1,0 +1,20 @@
+---
+- name: Query Criteria
+  block:
+    - name: Debug criteria job
+      ansible.builtin.debug:
+        msg: "DEBUG: criteria job --->{{ cifmw_dlrn_promote_criteria_job }}<---"
+
+    - name: Debug reported jobs
+      ansible.builtin.debug:
+        msg: "DEBUG: dlrnapi reported jobs --->{{ cifmw_dlrn_promote_hash_report_status_output }}<---"
+
+    - name: Criteria failed?
+      ansible.builtin.fail:
+        msg: "FAILURE! :( Promotion criteria failed to match."
+      when: cifmw_dlrn_promote_criteria_job not in cifmw_dlrn_promote_hash_report_status_output
+
+    - name: Criteria match?
+      ansible.builtin.debug:
+        msg: "SUCCESS! :) Promotion criteria match!"
+      when: cifmw_dlrn_promote_criteria_job in cifmw_dlrn_promote_hash_report_status_output

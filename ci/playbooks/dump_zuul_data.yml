@@ -1,0 +1,43 @@
+---
+- name: "Run ci/playbooks/dump_zuul_data.yml"
+  hosts: controller, primary
+  gather_facts: true
+  tasks:
+    - name: Create zuul-output directory
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/ci-framework-data/artifacts/parameters"
+        state: directory
+        mode: "0755"
+
+    - name: Slurp Zuul inventory test
+      ansible.builtin.slurp:
+        path: "{{ zuul.executor.log_root }}/zuul-info/inventory.yaml"
+      register: _inventory_yaml
+      delegate_to: localhost
+
+    - name: Save zuul inventory
+      vars:
+        _original_inventory: "{{ _inventory_yaml['content'] | b64decode | from_yaml }}"
+        _localhost_inventory:
+          all:
+            hosts:
+              localhost:
+                ansible_connection: local
+      ansible.builtin.copy:
+        dest: "{{ ansible_user_dir }}/ci-framework-data/artifacts/zuul_inventory.yml"
+        content: >-
+          {{
+              _original_inventory |
+              combine(_localhost_inventory, recursive=True) |
+              to_nice_yaml
+          }}
+
+    - name: Save zuul vars without the change_message
+      vars:
+        _original_inventory: "{{ _inventory_yaml['content'] | b64decode | from_yaml }}"
+        _vars_to_keep: |
+          {{ _original_inventory.all.vars | ansible.utils.remove_keys(target=['change_message']) }}
+      ansible.builtin.copy:
+        content: '{{ _vars_to_keep | to_nice_yaml }}'
+        dest: "{{ ansible_user_dir }}/ci-framework-data/artifacts/parameters/zuul-params.yml"
+        mode: "0644"

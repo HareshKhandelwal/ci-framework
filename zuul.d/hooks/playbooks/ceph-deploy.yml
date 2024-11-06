@@ -1,0 +1,69 @@
+---
+# Following those notes: https://github.com/fultonj/zed/tree/main/edpm
+- name: Deploy toy ceph hook
+  hosts: "{{ cifmw_target_hook_host | default('localhost') }}"
+  gather_facts: false
+  tasks:
+
+    - name: Debug cifmw_make_ceph_environment
+      when:
+        - cifmw_make_ceph_environment is defined
+      ansible.builtin.debug:
+        var: cifmw_make_ceph_environment
+
+    # Since the hook injects the ansible.cfg in the ansible-playbook command,
+    # we therefore should know where to look for the install_yamls_makes role.
+    # For the records, this role is generated in the 01-bootstrap.yml playbook
+    # by leveraging the install_yamls role and related modules, especially
+    # the generate_make_tasks.
+    # And we can pass down the cifmw_make_ceph_environment set in the
+    # environment of the main play. If we don't have anything for that param,
+    # let's default to an empty hash.
+    - name: Run make_ceph
+      vars:
+        make_ceph_env: >-
+          {{
+          cifmw_install_yamls_environment |
+          combine(
+            cifmw_make_ceph_environment | default({}) |
+            combine({ 'PATH': cifmw_path })
+          )
+          }}
+      ansible.builtin.include_role:
+        role: install_yamls_makes
+        tasks_from: "make_ceph.yml"
+
+    - name: Get ceph uuid
+      register: generated_uuid
+      environment:
+        KUBECONFIG: "{{ cifmw_openshift_kubeconfig }}"
+        PATH: "{{ cifmw_path }}"
+      ansible.builtin.command:
+        cmd: oc get secret ceph-conf-files -o json
+
+    - name: Extract ceph.conf from secret
+      ansible.builtin.set_fact:
+        cifmw_ceph_conf_encoded: >-
+          {{
+            (
+              generated_uuid.stdout |
+              from_json
+            )['data']['ceph.conf']
+          }}
+
+    - name: Extract FSID from ceph.conf
+      ansible.builtin.set_fact:
+        cifmw_ceph_fsid: "{{ cifmw_ceph_conf_encoded | b64decode | regex_search('.*fsid.*=(.*)\n', '\\1') | first | trim }}"
+
+    # That file is known by the main play - the run_hook/playbook task will
+    # check for its availability after the hook is finished, and load it using
+    # the ansible.builtin.include_vars call. This will expose the encoded
+    # cifmw_ceph_conf and ceph FDID into the main play, allowing to consume it
+    # in further steps.
+    - name: Extract and push ceph_uuid
+      ansible.builtin.copy:
+        mode: "0644"
+        dest: "{{ cifmw_basedir }}/artifacts/{{ step }}_{{ hook_name }}.yml"
+        content: |-
+          cifmw_ceph_conf: {{ cifmw_ceph_conf_encoded }}
+          cifmw_ceph_fsid: {{ cifmw_ceph_fsid }}

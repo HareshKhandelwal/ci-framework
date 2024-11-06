@@ -1,0 +1,539 @@
+---
+# Base job definition for adoption. Provide base layout with CRC on a dedicated
+# nodeset  and an ansible-controller.
+- job:
+    name: cifmw-adoption-base
+    parent: base-extracted-crc
+    abstract: true
+    timeout: 14400
+    attempts: 1
+    nodeset: centos-9-rhel-9-2-crc-extracted-2-39-0-3xl
+    roles:
+      - zuul: github.com/openstack-k8s-operators/ci-framework
+    pre-run:
+      - ci/playbooks/multinode-customizations.yml
+      - ci/playbooks/e2e-prepare.yml
+      - ci/playbooks/dump_zuul_data.yml
+    post-run:
+      - ci/playbooks/e2e-collect-logs.yml
+      - ci/playbooks/collect-logs.yml
+      - ci/playbooks/multinode-autohold.yml
+    vars: &adoption_vars
+      zuul_log_collection: true
+      registry_login_enabled: true
+      push_registry: quay.rdoproject.org
+      quay_login_secret_name: quay_nextgen_zuulgithubci
+      cifmw_artifacts_crc_sshkey: "~/.ssh/id_rsa"
+      cifmw_openshift_user: kubeadmin
+      cifmw_openshift_password: "123456789"
+      cifmw_openshift_api: api.crc.testing:6443
+      cifmw_openshift_kubeconfig: "{{ ansible_user_dir }}/.crc/machines/crc/kubeconfig"
+      cifmw_openshift_skip_tls_verify: true
+      cifmw_openshift_setup_skip_internal_registry_tls_verify: true
+      cifmw_use_libvirt: false
+      cifmw_use_crc: false
+      cifmw_zuul_target_host: controller
+      crc_ci_bootstrap_cloud_name: "{{ nodepool.cloud | replace('-nodepool-tripleo','') }}"
+      crc_ci_bootstrap_networking:
+        networks:
+          default:
+            mtu: "{{ ('ibm' in nodepool.cloud) | ternary('1440', '1500') }}"
+            router_net: "{{ ('ibm' in nodepool.cloud) | ternary('hostonly', 'public') }}"
+            range: 192.168.122.0/24
+          internal-api:
+            vlan: 20
+            range: 172.17.0.0/24
+          storage:
+            vlan: 21
+            range: 172.18.0.0/24
+          tenant:
+            vlan: 22
+            range: 172.19.0.0/24
+          storage_mgmt:
+            vlan: 23
+            range: 172.20.0.0/24
+        instances:
+          controller:
+            networks:
+              default:
+                ip: 192.168.122.11
+              internal-api:
+                ip: 172.17.0.4
+              storage:
+                ip: 172.18.0.4
+              tenant:
+                ip: 172.19.0.4
+              storage_mgmt:
+                ip: 172.20.0.4
+          crc:
+            networks:
+              default:
+                ip: 192.168.122.10
+              internal-api:
+                ip: 172.17.0.5
+              storage:
+                ip: 172.18.0.5
+              tenant:
+                ip: 172.19.0.5
+              storage_mgmt:
+                ip: 172.20.0.5
+          standalone:
+            networks:
+              default:
+                ip: 192.168.122.100
+                config_nm: false
+              internal-api:
+                ip: 172.17.0.100
+                config_nm: false
+              storage:
+                ip: 172.18.0.100
+                config_nm: false
+              tenant:
+                ip: 172.19.0.100
+                config_nm: false
+              storage_mgmt:
+                ip: 172.20.0.100
+                config_nm: false
+
+# NOTE(marios): need to keep this old job because of zuul branches, see comments at OSPRH-8452
+- job:
+    name: cifmw-data-plane-adoption-osp-17-to-extracted-crc
+    parent: adoption-standalone-to-crc-ceph-provider
+
+- job:
+    name: adoption-standalone-to-crc-ceph-provider
+    description: |
+        Standalone source OSP 17.1 node adopted to crc RHOSO 18.
+        Has ceph, not TLS. Uses a content provider.
+    parent: adoption-standalone-to-crc-ceph
+    files:
+      - ^playbooks/01-bootstrap.yml
+      - ^playbooks/02-infra.yml
+      - ^playbooks/06-deploy-edpm.yml
+      - ^roles/discover_latest_image/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+      - ^roles/edpm_prepare/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+      - ^roles/install_ca/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+      - ^roles/install_yamls/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+      - ^roles/openshift_login/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+      - ^roles/openshift_setup/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+      - ^roles/repo_setup/(defaults|files|handlers|library|lookup_plugins|module_utils|tasks|templates|vars).*
+      - ^hooks/playbooks/fetch_compute_facts.yml
+      - ^zuul.d/adoption.yaml
+      - go.mod
+      - apis/go.mod
+    required-projects:
+      - openstack-k8s-operators/openstack-operator
+    irrelevant-files:
+      - .*/*.md
+      - .ansible-lint
+      - .ci-operator.yaml
+      - .dockerignore
+      - .gitignore
+      - .golangci.yaml
+      - .pre-commit-config.yaml
+      - .readthedocs.yaml
+      - .spellcheck.yml
+      - .yamllint
+      - ^LICENSE$
+      - ^.github/.*$
+      - ^LICENSE$
+      - ^OWNERS$
+      - ^OWNERS_ALIASES$
+      - ^PROJECT$
+      - ^README.md$
+      - ^kuttl-test.yaml$
+      - ^renovate.json$
+      - ci/playbooks/molecule-prepare.yml
+      - ci/playbooks/molecule-test.yml
+      - ci/playbooks/pre-commit.yml
+      - ci/playbooks/pre-doc.yml
+      - ci/playbooks/run-doc.yml
+      - containers/ci
+      - contribute/.*
+      - docs/.*
+      - examples
+      - mkdocs.yml
+      - molecule-requirements.txt
+      - molecule/.*
+      - roles/.*/molecule/.*
+      - roles/dlrn_report
+      - roles/dlrn_promote
+      - roles/devscripts
+      - roles/dnsmasq
+      - roles/nat64_appliance
+      - roles/reproducer
+      - roles/virtualbmc
+      - tests?\/functional
+      - zuul.d/molecule.*
+
+# NOTE(marios): need to keep this old job because of zuul branches, see comments at OSPRH-8452
+- job:
+    name: cifmw-data-plane-adoption-osp-17-to-extracted-crc-minimal-no-ceph
+    parent: adoption-standalone-to-crc-no-ceph-provider
+
+- job:
+    name: adoption-standalone-to-crc-no-ceph-provider
+    description: |
+        Standalone source OSP 17.1 node adopted to crc RHOSO 18.
+        Has TLS, not ceph. Uses a content provider.
+    parent: adoption-standalone-to-crc-ceph-provider
+    vars:
+      enable_tls: "true"
+      cloud_domain: "ooo.test"
+      use_ceph: "false"
+      dpa_test_suite: "test-minimal"
+
+- job:
+    name: cifmw-adoption-base-source-multinode
+    parent: base-extracted-crc
+    abstract: true
+    timeout: 14400
+    attempts: 1
+    nodeset: centos-9-multinode-rhel-9-2-crc-extracted-2-39-0-3xl
+    roles: &multinode-roles
+      - zuul: github.com/openstack-k8s-operators/ci-framework
+    pre-run: &multinode-prerun
+      - ci/playbooks/multinode-customizations.yml
+      - ci/playbooks/e2e-prepare.yml
+      - ci/playbooks/dump_zuul_data.yml
+    post-run: &multinode-postrun
+      - ci/playbooks/e2e-collect-logs.yml
+      - ci/playbooks/collect-logs.yml
+      - ci/playbooks/multinode-autohold.yml
+    vars:
+      <<: *adoption_vars
+      crc_ci_bootstrap_networking:
+        networks: &multinode_networks
+          default:
+            mtu: "{{ ('ibm' in nodepool.cloud) | ternary('1440', '1500') }}"
+            router_net: "{{ ('ibm' in nodepool.cloud) | ternary('hostonly', 'public') }}"
+            range: 192.168.122.0/24
+          internal-api:
+            vlan: 20
+            range: 172.17.0.0/24
+          storage:
+            vlan: 21
+            range: 172.18.0.0/24
+          tenant:
+            vlan: 22
+            range: 172.19.0.0/24
+          storage_mgmt:
+            vlan: 23
+            range: 172.20.0.0/24
+          external:
+            vlan: 44
+            range: 172.21.0.0/24
+        instances:
+          controller: &multinode-crlr
+            networks:
+              default:
+                ip: 192.168.122.11
+              internal-api:
+                ip: 172.17.0.4
+              storage:
+                ip: 172.18.0.4
+              tenant:
+                ip: 172.19.0.4
+              storage_mgmt:
+                ip: 172.20.0.4
+          crc: &multinode-crc
+            networks:
+              default:
+                ip: 192.168.122.10
+              internal-api:
+                ip: 172.17.0.5
+              storage:
+                ip: 172.18.0.5
+              tenant:
+                ip: 172.19.0.5
+              storage_mgmt:
+                ip: 172.20.0.5
+              external:
+                ip: 172.21.0.5
+          undercloud: &multinode-uc
+            networks:
+              default:
+                ip: 192.168.122.100
+                config_nm: false
+              internal-api:
+                ip: 172.17.0.100
+                config_nm: false
+              storage:
+                ip: 172.18.0.100
+                config_nm: false
+              tenant:
+                ip: 172.19.0.100
+                config_nm: false
+              storage_mgmt:
+                ip: 172.20.0.100
+                config_nm: false
+              external:
+                ip: 172.21.0.100
+                config_nm: false
+          overcloud-controller-0: &multinode-crlr-leaf0
+            networks:
+              default:
+                ip: 192.168.122.103
+                config_nm: false
+              internal-api:
+                ip: 172.17.0.103
+                config_nm: false
+              storage:
+                ip: 172.18.0.103
+                config_nm: false
+              tenant:
+                ip: 172.19.0.103
+                config_nm: false
+              storage_mgmt:
+                ip: 172.20.0.103
+                config_nm: false
+              external:
+                ip: 172.21.0.103
+                config_nm: false
+          overcloud-controller-1: &multinode-controller-1
+            networks:
+              default:
+                ip: 192.168.122.104
+                config_nm: false
+              internal-api:
+                ip: 172.17.0.104
+                config_nm: false
+              storage:
+                ip: 172.18.0.104
+                config_nm: false
+              tenant:
+                ip: 172.19.0.104
+                config_nm: false
+              storage_mgmt:
+                ip: 172.20.0.104
+                config_nm: false
+              external:
+                ip: 172.21.0.104
+                config_nm: false
+          overcloud-controller-2: &multinode-controller-2
+            networks:
+              default:
+                ip: 192.168.122.105
+                config_nm: false
+              internal-api:
+                ip: 172.17.0.105
+                config_nm: false
+              storage:
+                ip: 172.18.0.105
+                config_nm: false
+              tenant:
+                ip: 172.19.0.105
+                config_nm: false
+              storage_mgmt:
+                ip: 172.20.0.105
+                config_nm: false
+              external:
+                ip: 172.21.0.105
+                config_nm: false
+          overcloud-novacompute-0: &multinode-novacompute-0
+            networks:
+              default:
+                ip: 192.168.122.106
+                config_nm: false
+              internal-api:
+                ip: 172.17.0.106
+                config_nm: false
+              storage:
+                ip: 172.18.0.106
+                config_nm: false
+              tenant:
+                ip: 172.19.0.106
+                config_nm: false
+              storage_mgmt:
+                ip: 172.20.0.106
+                config_nm: false
+              external:
+                ip: 172.21.0.106
+                config_nm: false
+          overcloud-novacompute-1: &multinode-novacompute-1
+            networks:
+              default:
+                ip: 192.168.122.107
+                config_nm: false
+              internal-api:
+                ip: 172.17.0.107
+                config_nm: false
+              storage:
+                ip: 172.18.0.107
+                config_nm: false
+              tenant:
+                ip: 172.19.0.107
+                config_nm: false
+              storage_mgmt:
+                ip: 172.20.0.107
+                config_nm: false
+              external:
+                ip: 172.21.0.107
+                config_nm: false
+          overcloud-novacompute-2:
+            networks:
+              default:
+                ip: 192.168.122.108
+                config_nm: false
+              internal-api:
+                ip: 172.17.0.108
+                config_nm: false
+              storage:
+                ip: 172.18.0.108
+                config_nm: false
+              tenant:
+                ip: 172.19.0.108
+                config_nm: false
+              storage_mgmt:
+                ip: 172.20.0.108
+                config_nm: false
+              external:
+                ip: 172.21.0.108
+                config_nm: false
+
+- job:
+    name: cifmw-adoption-base-source-multinode-novacells
+    parent: base-extracted-crc
+    abstract: true
+    voting: false
+    timeout: 14400
+    attempts: 1
+    nodeset: centos-9-multinode-rhel-9-2-crc-extracted-2-39-0-3xl-novacells
+    roles:
+      - zuul: github.com/openstack-k8s-operators/ci-framework
+    pre-run: *multinode-prerun
+    post-run: *multinode-postrun
+    vars:
+      <<: *adoption_vars
+      crc_ci_bootstrap_networking:
+        networks: *multinode_networks
+        instances:
+          controller: *multinode-crlr
+          crc: *multinode-crc
+          undercloud: *multinode-uc
+          # NOTE(bogdando): assuming at most 3 IPs reservations per a cell stack in this flat networking /24 model, we get:
+          # IP_ind = base(103) + cell(0..max_cells-1) * max_cells + ind(0..2)
+          # Here we just provide results as static entries, as in intall_yamls config-download-multistack.j2 (those must be matching)
+          overcloud-controller-0: *multinode-crlr-leaf0
+          cell1-controller-0:
+            networks:
+              default:
+                ip: 192.168.122.106
+                config_nm: false
+              internal-api:
+                ip: 172.17.0.106
+                config_nm: false
+              storage:
+                ip: 172.18.0.106
+                config_nm: false
+              tenant:
+                ip: 172.19.0.106
+                config_nm: false
+              storage_mgmt:
+                ip: 172.20.0.106
+                config_nm: false
+              external:
+                ip: 172.21.0.106
+                config_nm: false
+          cell1-compute-0:
+            networks:
+              default:
+                ip: 192.168.122.107
+                config_nm: false
+              internal-api:
+                ip: 172.17.0.107
+                config_nm: false
+              storage:
+                ip: 172.18.0.107
+                config_nm: false
+              tenant:
+                ip: 172.19.0.107
+                config_nm: false
+              storage_mgmt:
+                ip: 172.20.0.107
+                config_nm: false
+              external:
+                ip: 172.21.0.107
+                config_nm: false
+          cell2-controller-compute-0:
+            networks:
+              default:
+                ip: 192.168.122.109
+                config_nm: false
+              internal-api:
+                ip: 172.17.0.109
+                config_nm: false
+              storage:
+                ip: 172.18.0.109
+                config_nm: false
+              tenant:
+                ip: 172.19.0.109
+                config_nm: false
+              storage_mgmt:
+                ip: 172.20.0.109
+                config_nm: false
+              external:
+                ip: 172.21.0.109
+                config_nm: false
+
+- job:
+    name: cifmw-adoption-base-multinode-networker
+    parent: base-extracted-crc
+    abstract: true
+    attempts: 1
+    roles: *multinode-roles
+    pre-run: *multinode-prerun
+    post-run: *multinode-postrun
+    vars:
+      <<: *adoption_vars
+      crc_ci_bootstrap_networking:
+        networks: *multinode_networks
+        instances:
+          controller: *multinode-crlr
+          crc: *multinode-crc
+          undercloud: *multinode-uc
+          overcloud-controller-0: *multinode-crlr-leaf0
+          overcloud-controller-1: *multinode-controller-1
+          overcloud-controller-2: *multinode-controller-2
+          overcloud-novacompute-0: *multinode-novacompute-0
+          overcloud-novacompute-1: *multinode-novacompute-1
+          overcloud-networker-0:
+            networks:
+              default:
+                ip: 192.168.122.108
+                config_nm: false
+              internal-api:
+                ip: 172.17.0.108
+                config_nm: false
+              storage:
+                ip: 172.18.0.108
+                config_nm: false
+              tenant:
+                ip: 172.19.0.108
+                config_nm: false
+              storage_mgmt:
+                ip: 172.20.0.108
+                config_nm: false
+              external:
+                ip: 172.21.0.108
+                config_nm: false
+          overcloud-networker-1:
+            networks:
+              default:
+                ip: 192.168.122.109
+                config_nm: false
+              internal-api:
+                ip: 172.17.0.109
+                config_nm: false
+              storage:
+                ip: 172.18.0.109
+                config_nm: false
+              tenant:
+                ip: 172.19.0.109
+                config_nm: false
+              storage_mgmt:
+                ip: 172.20.0.109
+                config_nm: false
+              external:
+                ip: 172.21.0.109
+                config_nm: false

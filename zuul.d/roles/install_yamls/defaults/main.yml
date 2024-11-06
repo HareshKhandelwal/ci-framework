@@ -1,0 +1,40 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+
+# All variables intended for modification should be placed in this file.
+# All variables within this role should have a prefix of "cifmw_install_yamls"
+cifmw_install_yamls_envfile: "install_yamls.sh"
+cifmw_install_yamls_out_dir_basedir: "{{ cifmw_basedir | default(ansible_user_dir ~ '/ci-framework-data') }}"
+cifmw_install_yamls_out_dir: "{{ cifmw_install_yamls_out_dir_basedir }}/artifacts"
+cifmw_install_yamls_manifests_dir: "{{ cifmw_manifests | default(cifmw_install_yamls_out_dir_basedir ~ '/artifacts/manifests') }}"
+cifmw_install_yamls_edpm_dir: "{{ cifmw_manifests | default(cifmw_install_yamls_out_dir_basedir ~ '/artifacts/edpm') }}"
+# A list of Install_yamls makefile vars that needs to be exported
+# cifmw_install_yamls_vars:
+#   MICROSHIFT: 1
+#   NAMESPACE: openstack
+#   METALLB_POOL would be removed once https://github.com/openstack-k8s-operators/install_yamls/pull/356 merges.
+cifmw_install_yamls_repo: "{{ cifmw_installyamls_repos | default(ansible_user_dir ~ '/src/github.com/openstack-k8s-operators/install_yamls') }}"
+cifmw_install_yamls_tasks_out: "{{ cifmw_install_yamls_out_dir }}/roles/install_yamls_makes/tasks"
+cifmw_install_yamls_whitelisted_vars:
+  - DEPLOY_DIR
+  - KUBECONFIG
+  - OUTPUT_BASEDIR
+  - OUTPUT_DIR
+  - SSH_KEY_FILE
+# Defines in install_yamls when we should clone and checkout based on
+# openstack-operator references.
+cifmw_install_yamls_checkout_openstack_ref: "true"

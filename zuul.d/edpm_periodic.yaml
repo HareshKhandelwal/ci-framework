@@ -1,0 +1,96 @@
+---
+- job:
+    name: periodic-podified-edpm-deployment-master-ocp-crc-1cs9
+    parent: cifmw-crc-podified-edpm-deployment
+    vars: &edpm_vars
+      cifmw_repo_setup_branch: master
+      cifmw_repo_setup_promotion: podified-ci-testing
+      cifmw_dlrn_report_result: true
+      cifmw_extras:
+        - '@scenarios/centos-9/nested_virt.yml'
+        - '@scenarios/centos-9/edpm_periodic.yml'
+
+- job:
+    name: periodic-podified-edpm-baremetal-master-ocp-crc
+    parent: cifmw-crc-podified-edpm-baremetal
+    vars:
+      <<: *edpm_vars
+      cifmw_tempest_registry: quay.rdoproject.org
+      cifmw_tempest_namespace: podified-{{ cifmw_repo_setup_branch }}-centos9
+      cifmw_tempest_container: openstack-tempest-all
+      cifmw_tempest_image_tag: "{{ cifmw_repo_setup_full_hash }}"
+
+
+- job:
+    name: periodic-podified-multinode-edpm-deployment-master-ocp-crc-cs9
+    parent: podified-multinode-edpm-deployment-crc
+    vars: &edpm_multinode_vars
+      cifmw_repo_setup_branch: master
+      cifmw_repo_setup_promotion: podified-ci-testing
+      cifmw_dlrn_report_result: true
+      cifmw_extras:
+        - '@scenarios/centos-9/multinode-ci.yml'
+        - '@scenarios/centos-9/edpm_periodic.yml'
+
+- job:
+    name: periodic-edpm-build-push-images-centos-9-master
+    parent: cifmw-base-edpm-build-images
+    vars:
+      cifmw_repo_setup_branch: master
+      cifmw_repo_setup_promotion: podified-ci-testing
+      openstack_release: master
+      cifmw_edpm_build_images_push_container_images: true
+      registry_login_enabled: true
+      cifmw_dlrn_report_result: true
+
+# Antelope jobs
+- job:
+    name: periodic-podified-edpm-deployment-antelope-ocp-crc-1cs9
+    parent: periodic-podified-edpm-deployment-master-ocp-crc-1cs9
+    vars:
+      cifmw_repo_setup_branch: antelope
+      cifmw_update_containers_org: podified-{{ cifmw_repo_setup_branch }}-centos9
+
+- job:
+    name: periodic-podified-edpm-baremetal-antelope-ocp-crc
+    parent: periodic-podified-edpm-baremetal-master-ocp-crc
+    vars:
+      cifmw_repo_setup_branch: antelope
+      cifmw_update_containers_org: podified-{{ cifmw_repo_setup_branch }}-centos9
+      cifmw_tempest_namespace: podified-{{ cifmw_repo_setup_branch }}-centos9
+
+- job:
+    name: periodic-podified-multinode-edpm-deployment-antelope-ocp-crc-cs9
+    parent: periodic-podified-multinode-edpm-deployment-master-ocp-crc-cs9
+    vars:
+      cifmw_repo_setup_branch: antelope
+      cifmw_update_containers_org: podified-{{ cifmw_repo_setup_branch }}-centos9
+
+- job:
+    name: periodic-edpm-build-push-images-centos-9-antelope
+    parent: periodic-edpm-build-push-images-centos-9-master
+    vars:
+      cifmw_repo_setup_branch: antelope
+      openstack_release: "{{ cifmw_repo_setup_branch }}"
+      cifmw_edpm_build_images_push_registry_namespace: "podified-{{ cifmw_repo_setup_branch }}-centos9"
+
+# Whitebox Neutron tempest plugin job
+- job:
+    name: periodic-whitebox-neutron-tempest-plugin-podified-multinode-edpm-deployment-crc-2comp
+    parent: whitebox-neutron-tempest-plugin-podified-multinode-edpm-deployment-crc-2comp
+    description: |
+      A periodic zuul job for rdo third party
+      whitebox-neutron-tempest-plugin-podified-multinode-edpm-deployment-crc-2comp job. It will
+      make sure check job is always functional.
+    vars:
+      cifmw_repo_setup_promotion: podified-ci-testing
+      cifmw_dlrn_report_result: true
+      cifmw_repo_setup_branch: antelope
+      cifmw_update_containers_org: podified-{{ cifmw_repo_setup_branch }}-centos9
+      cifmw_update_containers_registry: quay.rdoproject.org
+      cifmw_update_containers_tag: "{{ cifmw_repo_setup_full_hash }}"
+      cifmw_update_containers_openstack: true
+      cifmw_run_tests: true
+      cifmw_test_operator_tempest_registry: "{{ cifmw_update_containers_registry }}"
+      cifmw_test_operator_tempest_namespace: "{{ cifmw_update_containers_org }}"
+      cifmw_test_operator_tempest_image_tag: "{{ cifmw_repo_setup_full_hash }}"

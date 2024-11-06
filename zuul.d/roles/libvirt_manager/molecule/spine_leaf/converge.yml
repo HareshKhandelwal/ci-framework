@@ -1,0 +1,134 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Spine/leaf test
+  hosts: instance
+  gather_facts: true
+  vars:
+    ansible_user_dir: "{{ lookup('env', 'HOME') }}"
+    cifmw_basedir: "/opt/basedir"
+    cifmw_libvirt_manager_spineleaf_setup: true
+    cifmw_libvirt_manager_network_interface_types:
+      intnet-0: network
+      intnet-1: network
+      s0-rtr: network
+      s1-rtr: network
+    cifmw_libvirt_manager_vm_net_ip_set:
+      sl-compute: 100
+    _networks:
+      osp_trunk:
+        default: true
+        range: "192.168.140.0/24"
+        mtu: 1500
+      public:
+        range: "192.168.110.0/24"
+      intnet-0:
+        mtu: 1500
+      intnet-1:
+        mtu: 1500
+    cifmw_libvirt_manager_configuration:
+      vms:
+        sl-compute:
+          amount: 2
+          image_url: "{{ cifmw_discovered_image_url }}"
+          sha256_image_name: "{{ cifmw_discovered_hash }}"
+          image_local_dir: "{{ cifmw_basedir }}/images/"
+          disk_file_name: "spineleaf-centos-stream-9.qcow2"
+          disksize: 20
+          memory: 1
+          cpus: 1
+          nets:
+            - public
+            - osp_trunk
+          spineleafnets:
+            -  # sl-compute-0 interfaces
+              - public
+            -  # sl-compute-1 interfaces
+              - public
+        router:
+          amount: 1
+          image_url: "{{ cifmw_discovered_image_url }}"
+          sha256_image_name: "{{ cifmw_discovered_hash }}"
+          image_local_dir: "{{ cifmw_basedir }}/images/"
+          disk_file_name: "spineleaf-centos-stream-9.qcow2"
+          disksize: 20
+          memory: 1
+          cpus: 1
+          nets:
+            - public
+          spineleafnets:
+            -  # router - ocp_tester
+              - "s0-rtr"
+              - "s1-rtr"
+
+      networks:
+        public: |-
+          <network>
+            <name>public</name>
+            <forward mode='nat'/>
+            <bridge name='public' stp='on' delay='0'/>
+            <dns enable="no"/>
+            <ip
+             family='ipv4'
+             address='{{ _networks.public.range | ansible.utils.nthhost(1) }}'
+             prefix='24'>
+            </ip>
+          </network>
+        osp_trunk: |-
+          <network>
+            <name>osp_trunk</name>
+            <forward mode='nat'/>
+            <bridge name='osp_trunk' stp='on' delay='0'/>
+            <dns enable="no"/>
+            <ip
+             family='ipv4'
+             address='{{ _networks.osp_trunk.range | ansible.utils.nthhost(1) }}'
+             prefix='24'>
+            </ip>
+          </network>
+        intnet-0: |
+          <network>
+            <name>intnet-0</name>
+            <bridge name='intnet-0' stp='on' delay='0'/>
+          </network>
+        intnet-1: |
+          <network>
+            <name>intnet-1</name>
+            <bridge name='intnet-1' stp='on' delay='0'/>
+          </network>
+        # spines to router networks
+        s0-rtr: |
+          <network>
+            <name>s0-rtr</name>
+            <bridge name='s0-rtr' stp='on' delay='0'/>
+          </network>
+        s1-rtr: |
+          <network>
+            <name>s1-rtr</name>
+            <bridge name='s1-rtr' stp='on' delay='0'/>
+          </network>
+  roles:
+    - role: "discover_latest_image"
+  tasks:
+    - name: Load networking definition
+      ansible.builtin.include_vars:
+        file: ../deploy_layout/vars/input.yml
+        name: cifmw_networking_definition
+
+    - name: Deploy layout
+      ansible.builtin.import_role:
+        name: libvirt_manager
+        tasks_from: deploy_layout

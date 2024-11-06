@@ -1,0 +1,88 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: Verify if "success" flag exists after successful tests execution
+  register: cifmw_success_flag
+  ansible.builtin.stat:
+    path: "{{ ansible_user_dir }}/cifmw-success"
+
+- name: Ensure we have at least minimal ansible facts
+  tags:
+    - always
+  when:
+    - ansible_facts|length > 0
+  ansible.builtin.setup:
+    gather_subset: min
+
+- name: Ensure base directory exists
+  tags:
+    - always
+  ansible.builtin.file:
+    path: "{{ cifmw_artifacts_basedir }}/{{ item }}"
+    state: directory
+  loop:
+    - artifacts
+    - logs
+
+- name: Load generated hook environment for further usage
+  ignore_errors: true  # noqa: ignore-errors
+  ansible.builtin.include_vars:
+    dir: "{{ cifmw_artifacts_basedir }}/artifacts"
+    depth: 1
+    files_matching: '^(pre|post).*\.yml$'
+
+- name: Gather environment data
+  tags:
+    - always
+  ansible.builtin.import_tasks: environment.yml
+
+- name: Gather packages information
+  tags:
+    - always
+  ansible.builtin.import_tasks: packages.yml
+
+- name: Cleanup artifacts before finishing
+  tags:
+    - always
+  ansible.builtin.import_tasks: cleanup.yml
+
+- name: Run must gather
+  when: cifmw_artifacts_gather_logs
+  ignore_errors: true  # noqa: ignore-errors
+  ansible.builtin.import_role:
+    name: os_must_gather
+
+- name: Collect crc logs when tests failed
+  ignore_errors: true  # noqa: ignore-errors
+  when: not cifmw_success_flag.stat.exists
+  ansible.builtin.import_tasks: crc.yml
+
+- name: Get EDPM logs
+  ignore_errors: true  # noqa: ignore-errors
+  ansible.builtin.import_tasks: edpm.yml
+
+- name: Copy ansible logs
+  ansible.builtin.import_tasks: ansible_logs.yml
+
+- name: Ensure we have proper rights on the gathered content
+  ignore_errors: true  # noqa: ignore-errors
+  become: true
+  ansible.builtin.shell:
+    cmd: |-
+      find {{ cifmw_artifacts_basedir }}/logs -type f -exec chmod 0644 '{}' \;
+      find {{ cifmw_artifacts_basedir }}/logs -type d -exec chmod 0755 '{}' \;
+      find {{ cifmw_artifacts_basedir }}/artifacts -type f -exec chmod 0644 '{}' \;
+      find {{ cifmw_artifacts_basedir }}/artifacts -type d -exec chmod 0755 '{}' \;

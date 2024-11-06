@@ -1,0 +1,277 @@
+---
+# Copyright 2023 Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+- name: One hypervisor
+  hosts: instance
+  gather_facts: true
+  vars:
+    ansible_user_dir: "{{ lookup('env', 'HOME') }}"
+    cifmw_basedir: "/opt/basedir"
+    cifmw_libvirt_manager_vm_net_ip_set:
+      compute: 100
+      baremetal: 110
+    _networks:
+      osp_trunk:
+        default: true
+        range: "192.168.140.0/24"
+        mtu: 1500
+      public:
+        range: "192.168.110.0/24"
+      internal-api:
+        range: "172.17.0.0/24"
+        vlan: 20
+    cifmw_libvirt_manager_configuration:
+      vms:
+        nocompute:
+          amount: 0
+          start: false
+          manage: false
+          image_url: "{{ cifmw_discovered_image_url }}"
+          sha256_image_name: "{{ cifmw_discovered_hash }}"
+          image_local_dir: "{{ cifmw_basedir }}/images/"
+          disk_file_name: "centos-stream-9.qcow2"
+          disksize: 20
+          memory: 1
+          cpus: 1
+          nets:
+            - public
+            - osp_trunk
+          extra_disks_num: 1
+          extra_disks_size: 1G
+        compute:
+          amount: 1
+          image_url: "{{ cifmw_discovered_image_url }}"
+          sha256_image_name: "{{ cifmw_discovered_hash }}"
+          image_local_dir: "{{ cifmw_basedir }}/images/"
+          disk_file_name: "centos-stream-9.qcow2"
+          disksize: 20
+          memory: 1
+          cpus: 1
+          nets:
+            - public
+            - osp_trunk
+          extra_disks_num: 1
+          extra_disks_size: 1G
+        baremetal:
+          amount: 1
+          disksize: 10
+          memory: 1
+          cpus: 1
+          disk_file_name: 'blank'
+          nets:
+            - public
+            - osp_trunk
+      networks:
+        public: |-
+          <network>
+            <name>public</name>
+            <forward mode='nat'/>
+            <bridge name='public' stp='on' delay='0'/>
+            <dns enable="no"/>
+            <ip
+             family='ipv4'
+             address='{{ _networks.public.range | ansible.utils.nthhost(1) }}'
+             prefix='24'>
+            </ip>
+          </network>
+        osp_trunk: |-
+          <network>
+            <name>osp_trunk</name>
+            <forward mode='nat'/>
+            <bridge name='osp_trunk' stp='on' delay='0'/>
+            <dns enable="no"/>
+            <ip
+             family='ipv4'
+             address='{{ _networks.osp_trunk.range | ansible.utils.nthhost(1) }}'
+             prefix='24'>
+            </ip>
+          </network>
+  roles:
+    - role: "discover_latest_image"
+  tasks:
+    - name: Load networking definition
+      ansible.builtin.include_vars:
+        file: input.yml
+        name: cifmw_networking_definition
+
+    - name: Deploy layout
+      ansible.builtin.import_role:
+        name: libvirt_manager
+        tasks_from: deploy_layout
+
+    - name: Check files and deployed resources
+      block:
+        - name: Get wanted files
+          register: generated_files
+          ansible.builtin.stat:
+            path: "{{ cifmw_basedir }}/{{ item }}"
+          loop:
+            - reproducer-inventory/compute-group.yml
+
+        - name: Assert file availability
+          ansible.builtin.assert:
+            that:
+              - item.stat.exists | bool
+          loop: "{{ generated_files.results }}"
+          loop_control:
+            label: "{{ item.stat.path }}"
+
+        - name: Get virtual network list
+          register: nets
+          community.libvirt.virt_net:
+            command: list_nets
+
+        - name: Get virtual machines
+          register: vms
+          community.libvirt.virt:
+            command: "list_vms"
+
+        - name: Output network list
+          ansible.builtin.debug:
+            msg:
+              - "{{ nets.list_nets | sort }}"
+              - >-
+                {{
+                  ['cifmw-public', 'cifmw-osp_trunk'] |
+                  sort
+                }}
+
+        - name: Assert resource lists
+          vars:
+            sorted_nets: "{{ nets.list_nets | sort }}"
+            compare_nets: >-
+              {{
+                ['cifmw-public', 'cifmw-osp_trunk'] |
+                sort
+              }}
+            sorted_vms: "{{ vms.list_vms | sort }}"
+            compare_vms: >-
+              {{
+                ["cifmw-compute-0",
+                 "cifmw-compute-1",
+                 "cifmw-baremetal-0"] | sort
+              }}
+          ansible.builtin.assert:
+            that:
+              - sorted_nets == compare_nets
+              - sorted_vms == compare_vms
+            msg: |
+              Got {{ sorted_vms }} and {{ sorted_nets }}
+              Want {{ compare_vms }} and {{ compare_nets }}
+
+        - name: Get compute-0 network interfaces
+          register: cmp_nics
+          ansible.builtin.command:
+            cmd: >-
+              virsh -c qemu:///system -q
+              domiflist cifmw-compute-0
+
+        - name: Ensure compute-0 connections
+          vars:
+            _vals: >-
+              {{
+                cmp_nics.stdout_lines |
+                product([" compute--0"]) |
+                map('join') |
+                map('split')
+              }}
+            _nics: >-
+              {{
+                _vals |
+                map('zip',
+                    ['nic', 'type', 'network', 'driver', 'mac', 'host' ]) |
+                map('map', 'reverse') |
+                map('community.general.dict')
+              }}
+          ansible.builtin.assert:
+            that:
+              - item.network in ['cifmw-public', 'cifmw-osp_trunk']
+          loop: "{{ _nics }}"
+
+        - name: Get osp_trunk network XML
+          register: _net_xml
+          community.libvirt.virt_net:
+            command: "get_xml"
+            name: "cifmw-osp_trunk"
+
+    - name: Verify existence of storage pool.
+      ansible.builtin.command:
+        cmd: "virsh -c qemu:///system pool-info cifmw-pool"
+
+    - name: Test volumes.
+      block:
+        - name: Gather the list of created volumes.
+          register: vol_count
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              virsh -c qemu:///system vol-list --pool cifmw-pool | \
+              grep -v xml | grep -c cifmw-compute
+
+        - name: Verify the number of created volumes match with expected count
+          vars:
+            _data: "{{ _cifmw_libvirt_manager_layout.vms.compute }}"
+            expect_vol_num: >-
+              {{
+                (_data.amount | int) *
+                (_data.extra_disks_num | int)
+              }}
+            found_vol_num: "{{ vol_count.stdout | int }}"
+          ansible.builtin.assert:
+            that:
+              - found_vol_num == expect_vol_num
+
+    - name: Test volume attachment.
+      block:
+        - name: Gather the domain information about VMs having extra disks.
+          register: vm_xml
+          community.libvirt.virt:
+            command: "get_xml"
+            name: "{{ item }}"
+            uri: "qemu:///system"
+          loop: "{{ vms.list_vms | select('match', '^cifmw-compute.*') }}"
+
+        - name: Gather the number of volumes attached.
+          register: volume_count
+          community.general.xml:
+            count: true
+            xmlstring: "{{ item.get_xml }}"
+            xpath: "/domain/devices/disk"
+          loop: "{{ vm_xml.results }}"
+
+        - name: Verify the number of volumes attached match with the expected count.
+          vars:
+            internal_disk_item: 1
+            attached_cdrom: 1
+            expected_count: >-
+              {{
+                (
+                  cifmw_libvirt_manager_configuration.vms.compute.extra_disks_num | int
+                ) + internal_disk_item + attached_cdrom
+              }}
+            found_count: "{{ item.count | int }}"
+          ansible.builtin.assert:
+            that:
+              - expected_count == found_count
+          loop: "{{ volume_count.results }}"
+
+    # Redeploying the exact same layout will ensure we
+    # are able to run the role multiple time over the
+    # same data, without facing any issue.
+    - name: Redeploy layout
+      ansible.builtin.import_role:
+        name: libvirt_manager
+        tasks_from: deploy_layout

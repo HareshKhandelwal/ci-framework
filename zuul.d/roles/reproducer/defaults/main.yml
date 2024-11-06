@@ -1,0 +1,52 @@
+---
+# Copyright Red Hat, Inc.
+# All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+
+# All variables intended for modification should be placed in this file.
+# All variables within this role should have a prefix of "cifmw_reproducer"
+cifmw_reproducer_basedir: "{{ cifmw_basedir | default( ansible_user_dir ~ '/ci-framework-data') }}"
+cifmw_reproducer_kubecfg: "{{ cifmw_libvirt_manager_configuration.vms.crc.image_local_dir }}/kubeconfig"
+cifmw_reproducer_params: {}
+cifmw_reproducer_run_job: true
+cifmw_reproducer_run_content_provider: true
+cifmw_reproducer_dns_servers:
+  - 1.1.1.1
+  - 8.8.8.8
+cifmw_reproducer_repositories: []
+cifmw_reproducer_hp_rhos_release: false
+cifmw_reproducer_dnf_tweaks: []
+cifmw_reproducer_compute_repos: []
+cifmw_reproducer_compute_set_repositories: true
+cifmw_reproducer_repositories_path: "src"
+cifmw_reproducer_play_extravars: []
+cifmw_reproducer_provision_net: ocppr
+cifmw_reproducer_supported_hypervisor_os:
+  CentOS:
+    minimum_version: 9
+  RedHat:
+    minimum_version: 9.3
+cifmw_reproducer_controller_basedir: >-
+  {{
+    (
+      '/home/zuul',
+      'ci-framework-data',
+      ) | path_join
+  }}
+
+# Allow to disable validations - user toggle this at their
+# own risks!
+cifmw_reproducer_validate_network: true
+cifmw_reproducer_validate_ocp_layout: true

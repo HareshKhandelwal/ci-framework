@@ -1,0 +1,23 @@
+---
+- name: Set cifmw_repo_setup_dlrn_hash_tag from content provider
+  ansible.builtin.set_fact:
+    cifmw_repo_setup_dlrn_hash_tag: "{{ content_provider_dlrn_md5_hash }}"
+  when:
+    - content_provider_dlrn_md5_hash is defined
+    - content_provider_dlrn_md5_hash | length > 0
+    - (not cifmw_run_update|default(false)) or (update_playbook_run is defined and cifmw_run_update|default(false))
+
+- name: Run repo-setup
+  become: "{{ not cifmw_repo_setup_output.startswith(ansible_user_dir) }}"
+  ansible.builtin.command:
+    cmd: >-
+      {{ cifmw_repo_setup_basedir }}/venv/bin/repo-setup
+      {{ cifmw_repo_setup_promotion }} {{ cifmw_repo_setup_additional_repos }}
+      -d {{ cifmw_repo_setup_os_release }}{{ cifmw_repo_setup_dist_major_version }}
+      -b {{ cifmw_repo_setup_branch }}
+      --rdo-mirror {{ cifmw_repo_setup_rdo_mirror }}
+      {% if cifmw_repo_setup_dlrn_hash_tag | length > 0 %}
+      --dlrn-hash-tag {{ cifmw_repo_setup_dlrn_hash_tag }}
+      {% endif %}
+      -o {{ cifmw_repo_setup_output }}
+  environment: "{{ cifmw_repo_setup_env | default ({}) }}"

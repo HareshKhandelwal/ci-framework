@@ -1,0 +1,103 @@
+networks:
+  ctlplane:
+    network: "192.168.122.0/24"
+    mtu: 1500
+    tools:
+      multus:
+        ranges:
+          - start: 30
+            end: 39
+      netconfig:
+        ranges:
+          - start: "192.168.122.40"
+            end: "192.168.122.49"
+          - start: 100
+            length: 10
+      metallb:
+        ranges:
+          - start: 60
+            end: 69
+  internal-api:
+    network: "172.17.0.0/24"
+    vlan: 20
+    mtu: 1496
+    tools:
+      multus:
+        ranges:
+          - start: 30
+            end: 39
+        routes:
+          - destination: "192.168.121.0/24"
+            gateway: "192.168.122.1"
+      netconfig:
+        ranges:
+          - start: "172.17.0.40"
+            end: "172.17.0.49"
+          - start: 100
+            length: 10
+      metallb:
+        ranges:
+          - start: 60
+            end: 69
+  storage:
+    network: "172.18.0.0/24"
+    vlan: 21
+    mtu: 1496
+    tools:
+      multus:
+        ranges:
+          - start: 30
+            end: 39
+      netconfig:
+        ranges:
+          - start: "172.18.0.40"
+            end: "172.18.0.49"
+          - start: 100
+            length: 10
+      metallb:
+        ranges:
+          - start: 60
+            end: 69
+  tenant:
+    network: "172.19.0.0/24"
+    vlan: 22
+    mtu: 1496
+    tools:
+      multus:
+        ranges:
+          - start: 30
+            end: 39
+      netconfig:
+        ranges:
+          - start: "172.19.0.40"
+            end: "172.19.0.49"
+          - start: 100
+            length: 10
+      metallb:
+        ranges:
+          - start: 60
+            end: 69
+group-templates:
+  group-2:
+    networks:
+      ctlplane:
+        range:
+          start: 10
+          length: 5
+      internal-api:
+        range:
+          start: 10
+          length: 30
+        trunk-parent: ctlplane
+  group-3:
+    network-template:
+      range:
+        start: 10
+        length: 5
+    networks:
+      tenant: {}
+      storage:
+        trunk-parent: tenant
+instances:
+  instance-3:
+    skip-nm-configuration: true
